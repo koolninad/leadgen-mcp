@@ -163,6 +163,7 @@ def create_client(
     follow_redirects: bool = True,
     local_address: str | None = None,
     proxy: str | None = ...,  # sentinel: use settings default
+    use_ipv6: bool = True,
 ) -> httpx.AsyncClient:
     """Create an ``httpx.AsyncClient``.
 
@@ -174,7 +175,17 @@ def create_client(
     proxy:
         Explicit proxy URL.  When omitted (default sentinel), falls back to
         ``settings.http_proxy``.  Pass ``None`` to disable.
+    use_ipv6:
+        When True (default) and IPv6 rotation is enabled in settings,
+        automatically bind to a random IPv6 address from the pool.
+        Ignored if ``local_address`` is explicitly provided.
     """
+    # Auto-select an IPv6 address if enabled and no explicit local_address given
+    if local_address is None and use_ipv6:
+        rotator = _get_ipv6_rotator()
+        if rotator:
+            local_address = rotator.get_random_address()
+
     transport_kwargs: dict = dict(
         retries=max_retries,
         limits=httpx.Limits(

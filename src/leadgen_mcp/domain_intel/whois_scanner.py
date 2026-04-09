@@ -8,24 +8,55 @@ import httpx
 from ..utils.http import create_client
 
 
-WHOIS_API_URL = "https://whois.freeaitools.org/api/v1/whois"
+WHOIS_API_URLS = [
+    "https://whois.freeaitools.org/api/v1/whois",
+    "https://api.whoisfreaks.com/v1.0/whois",
+]
 
 
 async def lookup_whois(domain: str) -> dict:
-    """Query a free WHOIS API and return parsed registration data."""
-    try:
-        async with create_client(timeout=20.0) as client:
-            resp = await client.get(WHOIS_API_URL, params={"domain": domain})
-            resp.raise_for_status()
-            data = resp.json()
-    except httpx.HTTPStatusError as e:
-        return {"domain": domain, "error": f"WHOIS API returned {e.response.status_code}"}
-    except httpx.RequestError as e:
-        return {"domain": domain, "error": f"WHOIS request failed: {e}"}
-    except Exception as e:
-        return {"domain": domain, "error": str(e)}
+    """Query WHOIS APIs with fallback and return parsed registration data.
 
-    return _parse_whois(domain, data)
+    Tries multiple public WHOIS APIs to handle DNS resolution failures
+    or service outages gracefully.
+    """
+    last_error = None
+    for api_url in WHOIS_API_URLS:
+        try:
+            async with create_client(timeout=20.0, use_ipv6=False) as client:
+                resp = await client.get(api_url, params={"domain": domain})
+                resp.raise_for_status()
+                data = resp.json()
+                return _parse_whois(domain, data)
+        except httpx.HTTPStatusError as e:
+            last_error = f"WHOIS API returned {e.response.status_code}"
+        except httpx.ConnectError as e:
+            last_error = f"WHOIS API connection failed (DNS/network): {e}"
+        except httpx.RequestError as e:
+            last_error = f"WHOIS request failed: {e}"
+        except Exception as e:
+            last_error = str(e)
+
+    # All APIs failed — try python-whois as a local fallback
+    try:
+        import whois as python_whois
+        raw = python_whois.whois(domain)
+        if raw:
+            raw_dict = {}
+            for key in ("creation_date", "expiration_date", "updated_date",
+                        "registrar", "name_servers", "status",
+                        "registrant_name", "registrant_organization",
+                        "registrant_country"):
+                val = getattr(raw, key, None)
+                if val is not None:
+                    raw_dict[key] = val
+            return _parse_whois(domain, raw_dict)
+    except ImportError:
+        pass
+    except Exception:
+        pass
+
+    return {"domain": domain, "error": last_error or "All WHOIS lookups failed"}
 
 
 def _parse_whois(domain: str, raw: dict) -> dict:

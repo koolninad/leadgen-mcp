@@ -35,7 +35,7 @@ async def check_searxng() -> dict:
     """
     base_url = settings.searxng_url.rstrip("/")
     try:
-        async with create_client(timeout=5.0) as client:
+        async with create_client(timeout=5.0, use_ipv6=False) as client:
             resp = await client.get(f"{base_url}/healthz")
             if resp.status_code == 200:
                 return {"available": True, "url": base_url, "error": None}
@@ -89,7 +89,7 @@ async def _search_searxng(
 
     results: list[dict] = []
 
-    async with create_client(timeout=15.0) as client:
+    async with create_client(timeout=15.0, use_ipv6=False) as client:
         resp = await client.get(f"{base_url}/search", params=params)
         resp.raise_for_status()
         data = resp.json()

@@ -33,6 +33,7 @@ CRAWLERS = {
     "hackernews": HackerNewsCrawler,
     "crunchbase": CrunchbaseCrawler,
     "github_projects": GitHubProjectsCrawler,
+    "github": GitHubProjectsCrawler,
     "google_maps": GoogleMapsCrawler,
     "quora": QuoraCrawler,
 }

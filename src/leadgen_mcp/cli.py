@@ -125,7 +125,10 @@ def run(platforms, min_score, max_emails, template, dry_run):
 @click.option("--dry-run/--send", default=True, help="Dry run mode")
 def daemon(platforms, interval, min_score, max_emails, template, dry_run):
     """Run the pipeline continuously (24/7 daemon mode)."""
+    # Default to ALL platforms in daemon mode for full coverage
+    all_platforms = list(PipelineConfig.default_queries().keys())
     config = PipelineConfig(
+        platforms=all_platforms,
         cycle_interval_hours=interval,
         min_score_to_email=min_score,
         max_emails_per_cycle=max_emails,

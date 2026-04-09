@@ -56,6 +56,10 @@ class Settings(BaseSettings):
     linkedin_headless: bool = True
     linkedin_slow_mo: int = 500  # milliseconds between actions (human-like)
 
+    # Telegram notifications
+    telegram_bot_token: str = ""
+    telegram_group_id: str = ""
+
     # Agency details
     agency_name: str = "Your Agency"
     agency_website: str = "https://your-agency.com"
