@@ -258,7 +258,10 @@ async def _try_multi_lookup(
 PRIVACY_KEYWORDS = [
     "privacy", "proxy", "whoisguard", "protect", "redacted",
     "domainsbyproxy", "contactprivacy", "withheld", "not disclosed",
-    "data protected", "gdpr", "registrant not",
+    "data protected", "gdpr", "registrant not", "shieldwhois",
+    "whoisprivacy", "domainprivacy", "identityprotect", "privacydotlink",
+    "whoisproxy", "1and1-private", "networksolutionsprivate",
+    "godaddy.com/whois", "abuse@", "noreply@",
 ]
 
 
