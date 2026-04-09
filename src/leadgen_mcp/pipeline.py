@@ -291,11 +291,37 @@ class LeadGenPipeline:
 
         await self._ensure_db()
 
-        # Step 1: Discover leads from all configured platforms
-        logger.info("Step 1/5: Discovering leads from %d platforms...",
+        # Step 1a: Discover leads from all configured platforms
+        logger.info("Step 1/6: Discovering leads from %d platforms...",
                      len(self.config.platforms))
         leads = await self.discover_leads(stats)
         logger.info("Discovered %d leads total", len(leads))
+
+        # Step 1b: Scan newly registered domains
+        logger.info("Step 1b/6: Scanning newly registered domains...")
+        try:
+            from .domain_intel.whois_scanner import scan_new_domains_feed
+            for tld in ["com", "io", "ai", "dev"]:
+                try:
+                    new_domains = await scan_new_domains_feed(tld=tld, days_back=3)
+                    for domain_info in (new_domains or [])[:10]:
+                        domain = domain_info if isinstance(domain_info, str) else domain_info.get("domain", "")
+                        if domain:
+                            lead = await upsert_lead(
+                                domain=domain,
+                                company_name=domain,
+                                source_platform="new_domain",
+                                source_url=f"https://{domain}",
+                                description=f"Newly registered .{tld} domain",
+                                signals=["newly_registered"],
+                            )
+                            if lead:
+                                leads.append(dict(lead))
+                    logger.info("  new_domains (.%s): %d found", tld, len(new_domains or []))
+                except Exception as e:
+                    logger.debug("  new_domains (.%s) failed: %s", tld, e)
+        except Exception as e:
+            logger.debug("New domain scan failed: %s", e)
 
         # Step 2: Scan websites for leads with domains
         logger.info("Step 2/5: Scanning websites...")
