@@ -11,6 +11,51 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
+# All TLDs to scan for newly registered domains
+ALL_TLDS = [
+    # Generic
+    "com", "net", "org", "info", "biz", "name", "pro", "mobi", "tel", "coop", "aero", "museum",
+    # Popular new gTLDs
+    "io", "ai", "dev", "app", "tech", "code", "cloud", "digital", "online", "site", "website",
+    "store", "shop", "agency", "studio", "design", "solutions", "services", "systems", "software",
+    "network", "media", "group", "global", "world", "live", "life", "work", "tools", "zone",
+    "space", "host", "consulting", "company", "enterprises", "ventures", "partners", "industries",
+    "academy", "education", "training", "institute", "university", "school", "courses",
+    "health", "medical", "clinic", "dental", "fitness", "yoga",
+    "finance", "money", "bank", "insurance", "investments", "capital", "fund", "trading",
+    "marketing", "email", "social", "chat", "community", "forum", "blog", "news", "press",
+    "travel", "tours", "holiday", "flights", "hotel", "restaurant", "cafe", "bar", "pizza",
+    "realty", "property", "properties", "land", "house", "homes", "apartments", "construction", "build",
+    "auto", "car", "cars", "taxi", "bike",
+    "legal", "law", "lawyer", "attorney",
+    "photo", "photography", "video", "film", "tv", "radio", "music", "band", "art", "gallery",
+    "fashion", "style", "beauty", "salon", "spa",
+    "food", "kitchen", "recipes", "organic", "wine", "beer", "coffee",
+    "pet", "vet", "dog", "fish",
+    "sport", "football", "golf", "tennis", "cricket", "basketball",
+    "game", "games", "play", "casino", "bet", "poker", "lotto",
+    "green", "eco", "solar", "energy", "garden",
+    "church", "faith", "bible", "christmas",
+    "family", "baby", "kids", "wedding",
+    "guru", "expert", "coach", "review", "reviews", "plus", "vip", "best", "top",
+    "click", "link", "lol", "wtf", "xyz", "icu", "fun", "cool", "rocks", "ninja",
+    # Tech specific
+    "engineering", "technology", "data", "compute", "crypto", "blockchain", "nft", "web3",
+    "security", "cyber", "hack", "linux",
+    "saas", "api", "graphql", "kubernetes", "docker",
+    # Regional/business
+    "co", "me", "cc", "ws", "la", "gg", "ly", "to", "fm", "am", "pm",
+    # Country codes (major markets)
+    "us", "uk", "ca", "au", "nz", "ie", "za",
+    "de", "fr", "es", "it", "nl", "be", "at", "ch", "pt", "pl", "se", "no", "dk", "fi",
+    "in", "cn", "jp", "kr", "sg", "hk", "tw", "th", "my", "ph", "id", "vn",
+    "br", "mx", "ar", "cl", "pe",
+    "ru", "ua", "cz", "ro", "hu", "bg", "hr", "sk", "si", "rs", "ba",
+    "tr", "ae", "sa", "il", "eg", "ng", "ke", "gh",
+    # Indian TLDs
+    "co.in", "org.in", "net.in", "gen.in", "firm.in", "ind.in",
+]
+
 from .config import settings
 from .db.repository import (
     get_db,
@@ -291,60 +336,17 @@ class LeadGenPipeline:
 
         await self._ensure_db()
 
-        # Step 1a: Discover leads from all configured platforms
-        logger.info("Step 1/6: Discovering leads from %d platforms...",
-                     len(self.config.platforms))
-        leads = await self.discover_leads(stats)
-        logger.info("Discovered %d leads total", len(leads))
+        all_leads = []
 
-        # Step 1b: Scan newly registered domains
-        logger.info("Step 1b/6: Scanning newly registered domains...")
+        # ============================================================
+        # PRIORITY 1: Newly Registered Domains (hottest leads)
+        # Scan NRDs → find emails → enrich → score → email immediately
+        # ============================================================
+        logger.info("Step 1/6: [PRIORITY] Scanning newly registered domains...")
+        nrd_leads = []
         try:
             from .domain_intel.whois_scanner import scan_new_domains_feed
-            # All major TLDs — generic, country code, and new gTLDs
-            ALL_TLDS = [
-                # Generic
-                "com", "net", "org", "info", "biz", "name", "pro", "mobi", "tel", "coop", "aero", "museum",
-                # Popular new gTLDs
-                "io", "ai", "dev", "app", "tech", "code", "cloud", "digital", "online", "site", "website",
-                "store", "shop", "agency", "studio", "design", "solutions", "services", "systems", "software",
-                "network", "media", "group", "global", "world", "live", "life", "work", "tools", "zone",
-                "space", "host", "consulting", "company", "enterprises", "ventures", "partners", "industries",
-                "academy", "education", "training", "institute", "university", "school", "courses",
-                "health", "medical", "clinic", "dental", "fitness", "yoga",
-                "finance", "money", "bank", "insurance", "investments", "capital", "fund", "trading",
-                "marketing", "email", "social", "chat", "community", "forum", "blog", "news", "press",
-                "travel", "tours", "holiday", "flights", "hotel", "restaurant", "cafe", "bar", "pizza",
-                "realty", "property", "properties", "land", "house", "homes", "apartments", "construction", "build",
-                "auto", "car", "cars", "taxi", "bike",
-                "legal", "law", "lawyer", "attorney",
-                "photo", "photography", "video", "film", "tv", "radio", "music", "band", "art", "gallery",
-                "fashion", "style", "beauty", "salon", "spa",
-                "food", "kitchen", "recipes", "organic", "wine", "beer", "coffee",
-                "pet", "vet", "dog", "fish",
-                "sport", "football", "golf", "tennis", "cricket", "basketball",
-                "game", "games", "play", "casino", "bet", "poker", "lotto",
-                "green", "eco", "solar", "energy", "garden",
-                "church", "faith", "bible", "christmas",
-                "family", "baby", "kids", "wedding",
-                "guru", "expert", "coach", "review", "reviews", "plus", "vip", "best", "top",
-                "click", "link", "lol", "wtf", "xyz", "icu", "fun", "cool", "rocks", "ninja",
-                # Tech specific
-                "engineering", "technology", "data", "compute", "crypto", "blockchain", "nft", "web3",
-                "security", "cyber", "hack", "linux",
-                "saas", "api", "graphql", "kubernetes", "docker",
-                # Regional/business
-                "co", "me", "tv", "cc", "ws", "la", "gg", "ly", "to", "fm", "am", "pm",
-                # Country codes (major markets)
-                "us", "uk", "ca", "au", "nz", "ie", "za",
-                "de", "fr", "es", "it", "nl", "be", "at", "ch", "pt", "pl", "se", "no", "dk", "fi",
-                "in", "cn", "jp", "kr", "sg", "hk", "tw", "th", "my", "ph", "id", "vn",
-                "br", "mx", "ar", "cl", "co", "pe",
-                "ru", "ua", "cz", "ro", "hu", "bg", "hr", "sk", "si", "rs", "ba",
-                "tr", "ae", "sa", "il", "eg", "ng", "ke", "gh",
-                # Indian TLDs
-                "in", "co.in", "org.in", "net.in", "gen.in", "firm.in", "ind.in",
-            ]
+            nrd_count = 0
             for tld in ALL_TLDS:
                 try:
                     new_domains = await scan_new_domains_feed(tld=tld, days_back=3)
@@ -356,41 +358,76 @@ class LeadGenPipeline:
                                 company_name=domain,
                                 source_platform="new_domain",
                                 source_url=f"https://{domain}",
-                                description=f"Newly registered .{tld} domain",
+                                description=f"Newly registered .{tld} domain — potential client needing website/software",
                                 signals=["newly_registered"],
                             )
                             if lead:
-                                leads.append(dict(lead))
-                    logger.info("  new_domains (.%s): %d found", tld, len(new_domains or []))
+                                nrd_leads.append(dict(lead))
+                                nrd_count += 1
+                    if new_domains:
+                        logger.info("  .%s: %d new domains", tld, len(new_domains))
                 except Exception as e:
-                    logger.debug("  new_domains (.%s) failed: %s", tld, e)
+                    logger.debug("  .%s failed: %s", tld, e)
+            logger.info("  Total NRDs found: %d", nrd_count)
         except Exception as e:
-            logger.debug("New domain scan failed: %s", e)
+            logger.debug("NRD scan failed: %s", e)
 
-        # Step 2: Scan websites for leads with domains
-        logger.info("Step 2/5: Scanning websites...")
+        # Scan, enrich, score NRD leads immediately (they have domains)
+        if nrd_leads:
+            logger.info("Step 2/6: Scanning NRD websites...")
+            nrd_leads = await self.scan_leads(nrd_leads, stats)
+
+            logger.info("Step 2b/6: Enriching NRD leads (finding emails, contacts)...")
+            nrd_leads = await self.enrich_leads(nrd_leads, stats)
+
+            logger.info("Step 2c/6: Scoring NRD leads...")
+            nrd_scored = await self.score_leads(nrd_leads, stats)
+
+            # Email NRD leads above threshold immediately
+            nrd_hot = [l for l in nrd_scored if l.get("_score_total", 0) >= self.config.min_score_to_email]
+            if nrd_hot:
+                logger.info("Step 2d/6: Emailing %d hot NRD leads...", len(nrd_hot))
+                await self.generate_and_send(nrd_hot, stats)
+
+            all_leads.extend(nrd_scored)
+            logger.info("  NRD pipeline: %d scanned, %d enriched, %d hot emailed",
+                         len(nrd_leads), stats.leads_enriched, len(nrd_hot) if nrd_leads else 0)
+
+        # ============================================================
+        # PRIORITY 2: Platform crawlers (Reddit, HN, IndieHackers, etc.)
+        # ============================================================
+        logger.info("Step 3/6: Discovering leads from %d platforms...",
+                     len(self.config.platforms))
+        leads = await self.discover_leads(stats)
+        logger.info("Discovered %d platform leads", len(leads))
+
+        # Step 4: Scan websites for platform leads with domains
+        logger.info("Step 4/6: Scanning platform lead websites...")
         leads = await self.scan_leads(leads, stats)
         logger.info("Scanned %d websites (%d ok, %d failed)",
                      stats.websites_scanned, stats.scan_successes,
                      stats.scan_failures)
 
-        # Step 3: Enrich leads
-        logger.info("Step 3/5: Enriching leads...")
+        # Step 5: Enrich platform leads
+        logger.info("Step 5/6: Enriching platform leads...")
         leads = await self.enrich_leads(leads, stats)
         logger.info("Enriched %d leads", stats.leads_enriched)
 
-        # Step 4: Score all leads
-        logger.info("Step 4/5: Scoring leads...")
+        # Step 6: Score platform leads
+        logger.info("Step 6/6: Scoring platform leads...")
         scored = await self.score_leads(leads, stats)
         logger.info("Scored %d leads: %d hot, %d warm, %d cold",
                      stats.leads_scored, stats.hot_leads,
                      stats.warm_leads, stats.cold_leads)
 
-        # Step 5: Generate + send emails for hot leads
+        # Email hot platform leads
         hot_leads = [l for l in scored if l.get("_score_total", 0) >= self.config.min_score_to_email]
-        logger.info("Step 5/5: Processing %d leads above score threshold %.0f...",
-                     len(hot_leads), self.config.min_score_to_email)
-        await self.generate_and_send(hot_leads, stats)
+        if hot_leads:
+            logger.info("Emailing %d hot platform leads...", len(hot_leads))
+            await self.generate_and_send(hot_leads, stats)
+
+        all_leads.extend(scored)
+        scored = all_leads
 
         # Send Telegram notification for EVERY lead with full details
         for i, lead in enumerate(scored, 1):
