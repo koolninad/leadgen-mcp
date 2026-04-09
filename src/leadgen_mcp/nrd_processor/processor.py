@@ -469,9 +469,10 @@ async def _score_domains(stats: dict) -> None:
 
         while True:
             rows = await db.execute_fetchall(
-                """SELECT id, domain, tld, registered_date, whois_data
+                """SELECT id, domain, tld, registered_date, whois_data,
+                          registrant_email, registrant_name, registrant_org, registrar, nameservers
                    FROM nrd_domains
-                   WHERE processed = 1 AND score = 0
+                   WHERE score = 0
                    LIMIT ? OFFSET ?""",
                 (batch_size, offset),
             )

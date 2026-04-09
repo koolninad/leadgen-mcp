@@ -302,9 +302,9 @@ async def save_whois_to_db(domain: str, whois_data: dict, registered_date: str =
             # No actionable email → reference table only
             await db.execute(
                 """INSERT OR IGNORE INTO nrd_domains_ref
-                   (domain, tld, registered_date, processed, registrant_email,
+                   (domain, tld, registered_date, registrant_email,
                     registrar, nameservers)
-                   VALUES (?, ?, ?, 1, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?)""",
                 (
                     domain, tld, registered_date or "", registrant_email,
                     whois_data.get("registrar"), nameservers_json,
@@ -324,25 +324,30 @@ async def process_whois_batch(
 ) -> dict[str, dict]:
     """Look up WHOIS for a batch of domains and save results to DB.
 
-    Returns the parsed WHOIS results.
+    Domains with real emails → nrd_domains
+    Domains without → nrd_domains_ref
     """
+    # Get registered_date from staging for each domain
+    db = await _get_nrd_db()
+    date_map = {}
+    try:
+        for domain in domains:
+            rows = await db.execute_fetchall(
+                "SELECT registered_date FROM nrd_staging WHERE domain = ?", (domain,)
+            )
+            if rows:
+                date_map[domain] = rows[0][0]
+    finally:
+        await db.close()
+
     results = await lookup_batch(domains, concurrency=concurrency)
 
-    # Save all results to DB
+    # Save all results — real emails go to nrd_domains, rest to nrd_domains_ref
     for domain, whois_data in results.items():
-        if "error" not in whois_data:
-            await save_whois_to_db(domain, whois_data)
-        else:
-            # Mark as processed even on error so we don't retry endlessly
-            db = await _get_nrd_db()
-            try:
-                await db.execute(
-                    """UPDATE nrd_domains SET processed = 1, updated_at = datetime('now')
-                       WHERE domain = ?""",
-                    (domain,),
-                )
-                await db.commit()
-            finally:
-                await db.close()
+        reg_date = date_map.get(domain, "")
+        try:
+            await save_whois_to_db(domain, whois_data, registered_date=reg_date)
+        except Exception as e:
+            logger.warning("Failed to save WHOIS for %s: %s", domain, e)
 
     return results
