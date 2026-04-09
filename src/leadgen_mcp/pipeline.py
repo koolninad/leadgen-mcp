@@ -301,7 +301,51 @@ class LeadGenPipeline:
         logger.info("Step 1b/6: Scanning newly registered domains...")
         try:
             from .domain_intel.whois_scanner import scan_new_domains_feed
-            for tld in ["com", "io", "ai", "dev"]:
+            # All major TLDs — generic, country code, and new gTLDs
+            ALL_TLDS = [
+                # Generic
+                "com", "net", "org", "info", "biz", "name", "pro", "mobi", "tel", "coop", "aero", "museum",
+                # Popular new gTLDs
+                "io", "ai", "dev", "app", "tech", "code", "cloud", "digital", "online", "site", "website",
+                "store", "shop", "agency", "studio", "design", "solutions", "services", "systems", "software",
+                "network", "media", "group", "global", "world", "live", "life", "work", "tools", "zone",
+                "space", "host", "consulting", "company", "enterprises", "ventures", "partners", "industries",
+                "academy", "education", "training", "institute", "university", "school", "courses",
+                "health", "medical", "clinic", "dental", "fitness", "yoga",
+                "finance", "money", "bank", "insurance", "investments", "capital", "fund", "trading",
+                "marketing", "email", "social", "chat", "community", "forum", "blog", "news", "press",
+                "travel", "tours", "holiday", "flights", "hotel", "restaurant", "cafe", "bar", "pizza",
+                "realty", "property", "properties", "land", "house", "homes", "apartments", "construction", "build",
+                "auto", "car", "cars", "taxi", "bike",
+                "legal", "law", "lawyer", "attorney",
+                "photo", "photography", "video", "film", "tv", "radio", "music", "band", "art", "gallery",
+                "fashion", "style", "beauty", "salon", "spa",
+                "food", "kitchen", "recipes", "organic", "wine", "beer", "coffee",
+                "pet", "vet", "dog", "fish",
+                "sport", "football", "golf", "tennis", "cricket", "basketball",
+                "game", "games", "play", "casino", "bet", "poker", "lotto",
+                "green", "eco", "solar", "energy", "garden",
+                "church", "faith", "bible", "christmas",
+                "family", "baby", "kids", "wedding",
+                "guru", "expert", "coach", "review", "reviews", "plus", "vip", "best", "top",
+                "click", "link", "lol", "wtf", "xyz", "icu", "fun", "cool", "rocks", "ninja",
+                # Tech specific
+                "engineering", "technology", "data", "compute", "crypto", "blockchain", "nft", "web3",
+                "security", "cyber", "hack", "linux",
+                "saas", "api", "graphql", "kubernetes", "docker",
+                # Regional/business
+                "co", "me", "tv", "cc", "ws", "la", "gg", "ly", "to", "fm", "am", "pm",
+                # Country codes (major markets)
+                "us", "uk", "ca", "au", "nz", "ie", "za",
+                "de", "fr", "es", "it", "nl", "be", "at", "ch", "pt", "pl", "se", "no", "dk", "fi",
+                "in", "cn", "jp", "kr", "sg", "hk", "tw", "th", "my", "ph", "id", "vn",
+                "br", "mx", "ar", "cl", "co", "pe",
+                "ru", "ua", "cz", "ro", "hu", "bg", "hr", "sk", "si", "rs", "ba",
+                "tr", "ae", "sa", "il", "eg", "ng", "ke", "gh",
+                # Indian TLDs
+                "in", "co.in", "org.in", "net.in", "gen.in", "firm.in", "ind.in",
+            ]
+            for tld in ALL_TLDS:
                 try:
                     new_domains = await scan_new_domains_feed(tld=tld, days_back=3)
                     for domain_info in (new_domains or [])[:10]:
