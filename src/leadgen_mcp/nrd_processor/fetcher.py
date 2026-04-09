@@ -76,42 +76,51 @@ async def clone_or_pull_repo(data_dir: str = NRD_DATA_DIR) -> str:
 
 
 def _find_domain_files(repo_path: str, days: int = 60) -> dict[str, Path]:
-    """Find domain list files for the last N days.
+    """Find the best domain list file for the requested day range.
 
-    The cenk/nrd repo stores files in various formats. We look for:
-      - Files named like YYYY-MM-DD.txt or YYYY-MM-DD
-      - Files inside date-named directories
-      - Any .txt files with date patterns in the name
+    cenk/nrd repo uses files named:
+      - nrd-last-10-days.txt
+      - nrd-last-20-days.txt
+      - nrd-last-30-days.txt
+      - nrd-last-45-days.txt
+      - nrd-last-60-days.txt
 
-    Returns: dict mapping date string -> file path
+    Returns: dict mapping a label -> file path
     """
     repo = Path(repo_path)
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-    cutoff_str = cutoff.strftime("%Y-%m-%d")
-
-    date_pattern = re.compile(r"(\d{4}-\d{2}-\d{2})")
     found: dict[str, Path] = {}
 
-    # Walk the repo looking for domain list files
-    for path in sorted(repo.rglob("*")):
-        if path.is_dir() or path.name.startswith("."):
-            continue
-        # Skip git internals
-        if ".git" in path.parts:
-            continue
+    # Map requested days to the best available file
+    available_files = [
+        (10, "nrd-last-10-days.txt"),
+        (20, "nrd-last-20-days.txt"),
+        (30, "nrd-last-30-days.txt"),
+        (45, "nrd-last-45-days.txt"),
+        (60, "nrd-last-60-days.txt"),
+    ]
 
-        match = date_pattern.search(path.name)
-        if not match:
-            # Check parent directory name
-            match = date_pattern.search(path.parent.name)
-        if not match:
-            continue
+    # Pick the smallest file that covers the requested range
+    best_file = None
+    for file_days, filename in available_files:
+        filepath = repo / filename
+        if filepath.exists():
+            if file_days >= days:
+                best_file = (filename, filepath)
+                break
+            best_file = (filename, filepath)  # fallback to largest available
 
-        date_str = match.group(1)
-        if date_str >= cutoff_str:
-            found[date_str] = path
+    if best_file:
+        label = best_file[0].replace(".txt", "")
+        found[label] = best_file[1]
+        logger.info("Using NRD file: %s (requested %d days)", best_file[0], days)
+    else:
+        # Fallback: any .txt file in the repo
+        for path in sorted(repo.glob("*.txt")):
+            if path.name.startswith("nrd"):
+                found[path.stem] = path
+                logger.info("Found NRD file: %s", path.name)
 
-    logger.info("Found %d domain files within last %d days", len(found), days)
+    logger.info("Found %d domain files", len(found))
     return found
 
 
@@ -225,7 +234,7 @@ async def ingest_domains_to_db(
                     values.append((domain, tld, date_str))
 
                 await db.executemany(
-                    """INSERT OR IGNORE INTO nrd_domains (domain, tld, registered_date)
+                    """INSERT OR IGNORE INTO nrd_staging (domain, tld, registered_date)
                        VALUES (?, ?, ?)""",
                     values,
                 )

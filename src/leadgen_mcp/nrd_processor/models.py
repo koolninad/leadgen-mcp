@@ -35,14 +35,26 @@ CREATE INDEX IF NOT EXISTS idx_nrd_domains_score ON nrd_domains(score);
 CREATE INDEX IF NOT EXISTS idx_nrd_domains_tld ON nrd_domains(tld);
 CREATE INDEX IF NOT EXISTS idx_nrd_domains_email_sent ON nrd_domains(email_sent);
 
+-- Staging table: all domains before WHOIS (temporary holding)
+CREATE TABLE IF NOT EXISTS nrd_staging (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    domain TEXT NOT NULL,
+    tld TEXT NOT NULL,
+    registered_date TEXT NOT NULL,
+    processed INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(domain)
+);
+
+CREATE INDEX IF NOT EXISTS idx_nrd_staging_processed ON nrd_staging(processed);
+
 -- Reference table: domains WITHOUT email or privacy-protected (no action, just reference)
 CREATE TABLE IF NOT EXISTS nrd_domains_ref (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     domain TEXT NOT NULL,
     tld TEXT NOT NULL,
     registered_date TEXT NOT NULL,
-    processed INTEGER DEFAULT 0,
-    registrant_email TEXT,     -- NULL or privacy email
+    registrant_email TEXT,
     registrar TEXT,
     nameservers TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),

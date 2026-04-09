@@ -422,9 +422,9 @@ async def _process_whois_batches(
     db = await _get_nrd_db()
     try:
         while True:
-            # Get a batch of unprocessed domains
+            # Get a batch of unprocessed domains from staging
             rows = await db.execute_fetchall(
-                """SELECT domain FROM nrd_domains
+                """SELECT domain, registered_date FROM nrd_staging
                    WHERE processed = 0
                    ORDER BY registered_date DESC
                    LIMIT ?""",
@@ -442,11 +442,12 @@ async def _process_whois_batches(
             except Exception as e:
                 logger.error("  WHOIS batch error: %s", e)
                 stats["errors"] += 1
-                # Mark them as processed to avoid infinite loop
-                for d in domains:
-                    await db.execute(
-                        "UPDATE nrd_domains SET processed = 1 WHERE domain = ?",
-                        (d,),
+
+            # Mark as processed in staging regardless of outcome
+            for d in domains:
+                await db.execute(
+                    "UPDATE nrd_staging SET processed = 1 WHERE domain = ?",
+                    (d,),
                     )
                 await db.commit()
 
