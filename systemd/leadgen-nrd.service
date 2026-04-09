@@ -1,0 +1,23 @@
+[Unit]
+Description=LeadGen NRD Bulk Processor
+After=network.target ollama.service docker.service
+Wants=docker.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/leadgen-mcp
+Environment=PYTHONPATH=/opt/leadgen-mcp/src
+ExecStart=/root/ai-projects/venv/bin/python3 -m leadgen_mcp.cli nrd-bulk --days 60 --batch-size 100 --send
+Restart=on-failure
+RestartSec=300
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=leadgen-nrd
+
+# Resource limits
+MemoryMax=2G
+CPUQuota=50%
+
+[Install]
+WantedBy=multi-user.target

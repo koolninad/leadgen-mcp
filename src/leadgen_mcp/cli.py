@@ -16,6 +16,8 @@ Usage:
     leadgen campaigns               # Show campaigns
     leadgen config show             # Show current config
     leadgen config set KEY VALUE    # Update .env config
+    leadgen nrd-bulk                # Process bulk newly registered domains
+    leadgen nrd-stats               # Show NRD processor statistics
     leadgen domain-check DOMAIN     # Full domain intelligence scan
     leadgen dns-check DOMAIN        # DNS health check
     leadgen ssl-check DOMAIN        # SSL certificate check
@@ -823,6 +825,163 @@ def ssl_check(domain):
 # ---------------------------------------------------------------------------
 # status
 # ---------------------------------------------------------------------------
+
+@cli.command("nrd-bulk")
+@click.option("--days", default=60, help="Process last N days of NRDs")
+@click.option("--batch-size", default=100, help="Domains per WHOIS batch")
+@click.option("--min-score", default=40, help="Minimum score for outreach")
+@click.option("--whois-concurrency", default=5, help="Concurrent WHOIS lookups")
+@click.option("--dry-run/--send", default=True,
+              help="Dry run mode (default: --dry-run)")
+def nrd_bulk(days, batch_size, min_score, whois_concurrency, dry_run):
+    """Process bulk newly registered domains (separate from main pipeline)."""
+    from .nrd_processor.processor import run_nrd_pipeline
+
+    console.print(Panel(
+        f"[bold]NRD Bulk Processor[/bold]\n"
+        f"Days: {days} | Batch: {batch_size} | Min score: {min_score}\n"
+        f"WHOIS concurrency: {whois_concurrency}\n"
+        f"Dry run: {dry_run}\n\n"
+        f"This processes millions of newly registered domains.\n"
+        f"Press Ctrl+C to stop gracefully.",
+        title="Starting NRD Pipeline",
+        border_style="magenta",
+    ))
+
+    async def _run():
+        stats = await run_nrd_pipeline(
+            days=days,
+            batch_size=batch_size,
+            dry_run=dry_run,
+            min_score=min_score,
+            whois_concurrency=whois_concurrency,
+        )
+
+        console.print(Panel(
+            f"Domains fetched: {stats['domains_fetched']}\n"
+            f"Domains ingested: {stats['domains_ingested']}\n"
+            f"WHOIS lookups: {stats['whois_lookups']}\n"
+            f"Scored: {stats['domains_scored']}\n"
+            f"High-score: {stats['high_score_count']}\n"
+            f"Emails generated: {stats['emails_generated']}\n"
+            f"Emails sent: {stats['emails_sent']}\n"
+            f"Telegram sent: {stats['telegram_sent']}\n"
+            f"Errors: {stats['errors']}",
+            title="NRD Pipeline Complete",
+            border_style="green" if stats["errors"] == 0 else "yellow",
+        ))
+
+    _run_async(_run())
+
+
+@cli.command("nrd-stats")
+def nrd_stats():
+    """Show NRD processor statistics."""
+    async def _run():
+        import aiosqlite
+        from pathlib import Path
+        from .config import settings
+
+        db_path = settings.db_path
+        if not Path(db_path).exists():
+            console.print("[red]Database not found[/red]")
+            return
+
+        db = await aiosqlite.connect(db_path)
+        db.row_factory = aiosqlite.Row
+
+        try:
+            # Check if tables exist
+            tables = await db.execute_fetchall(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'nrd_%'"
+            )
+            if not tables:
+                console.print("[dim]NRD tables not yet created. Run nrd-bulk first.[/dim]")
+                return
+
+            # Total domains
+            row = await db.execute_fetchall("SELECT COUNT(*) as cnt FROM nrd_domains")
+            total = dict(row[0])["cnt"] if row else 0
+
+            # Processed
+            row = await db.execute_fetchall(
+                "SELECT COUNT(*) as cnt FROM nrd_domains WHERE processed = 1"
+            )
+            processed = dict(row[0])["cnt"] if row else 0
+
+            # Scored > 0
+            row = await db.execute_fetchall(
+                "SELECT COUNT(*) as cnt FROM nrd_domains WHERE score > 0"
+            )
+            scored = dict(row[0])["cnt"] if row else 0
+
+            # High score
+            row = await db.execute_fetchall(
+                "SELECT COUNT(*) as cnt FROM nrd_domains WHERE score >= 40"
+            )
+            high = dict(row[0])["cnt"] if row else 0
+
+            # Emails sent
+            row = await db.execute_fetchall(
+                "SELECT COUNT(*) as cnt FROM nrd_domains WHERE email_sent = 1"
+            )
+            emailed = dict(row[0])["cnt"] if row else 0
+
+            # TLD breakdown (top 10)
+            tld_rows = await db.execute_fetchall(
+                """SELECT tld, COUNT(*) as cnt FROM nrd_domains
+                   GROUP BY tld ORDER BY cnt DESC LIMIT 10"""
+            )
+
+            # Progress by date
+            progress_rows = await db.execute_fetchall(
+                """SELECT date, total_domains, status FROM nrd_progress
+                   ORDER BY date DESC LIMIT 10"""
+            )
+
+            # Display
+            console.print(Panel(
+                f"[bold]Total domains:[/bold] {total:,}\n"
+                f"Processed (WHOIS): {processed:,}\n"
+                f"Scored (>0): {scored:,}\n"
+                f"High score (>=40): {high:,}\n"
+                f"Emails sent: {emailed:,}",
+                title="NRD Statistics",
+                border_style="magenta",
+            ))
+
+            if tld_rows:
+                tld_table = Table(title="Top TLDs")
+                tld_table.add_column("TLD", style="cyan")
+                tld_table.add_column("Count", justify="right")
+                for r in tld_rows:
+                    d = dict(r)
+                    tld_table.add_row(f".{d['tld']}", f"{d['cnt']:,}")
+                console.print(tld_table)
+
+            if progress_rows:
+                prog_table = Table(title="Recent Progress")
+                prog_table.add_column("Date", style="cyan")
+                prog_table.add_column("Domains", justify="right")
+                prog_table.add_column("Status")
+                for r in progress_rows:
+                    d = dict(r)
+                    status = d["status"]
+                    color = {"done": "green", "in_progress": "yellow", "error": "red"}.get(
+                        status, "dim"
+                    )
+                    prog_table.add_row(
+                        d["date"],
+                        f"{d['total_domains']:,}",
+                        f"[{color}]{status}[/{color}]",
+                    )
+                console.print(prog_table)
+
+        finally:
+            await db.close()
+
+    _run_async(_run())
+
 
 @cli.command()
 def status():
