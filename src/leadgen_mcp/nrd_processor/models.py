@@ -5,14 +5,14 @@ prefixed with nrd_ to avoid any collision with the main pipeline.
 """
 
 NRD_SCHEMA_SQL = """
+-- Active leads: domains WITH registrant email (actionable)
 CREATE TABLE IF NOT EXISTS nrd_domains (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     domain TEXT NOT NULL,
     tld TEXT NOT NULL,
     registered_date TEXT NOT NULL,
-    processed INTEGER DEFAULT 0,
     whois_data TEXT,          -- JSON blob of full WHOIS response
-    registrant_email TEXT,
+    registrant_email TEXT NOT NULL,
     registrant_name TEXT,
     registrant_org TEXT,
     registrar TEXT,
@@ -27,14 +27,27 @@ CREATE TABLE IF NOT EXISTS nrd_domains (
     telegram_sent INTEGER DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(domain, registered_date)
+    UNIQUE(domain)
 );
 
 CREATE INDEX IF NOT EXISTS idx_nrd_domains_date ON nrd_domains(registered_date);
-CREATE INDEX IF NOT EXISTS idx_nrd_domains_processed ON nrd_domains(processed);
 CREATE INDEX IF NOT EXISTS idx_nrd_domains_score ON nrd_domains(score);
 CREATE INDEX IF NOT EXISTS idx_nrd_domains_tld ON nrd_domains(tld);
 CREATE INDEX IF NOT EXISTS idx_nrd_domains_email_sent ON nrd_domains(email_sent);
+
+-- Reference table: domains WITHOUT email or privacy-protected (no action, just reference)
+CREATE TABLE IF NOT EXISTS nrd_domains_ref (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    domain TEXT NOT NULL,
+    tld TEXT NOT NULL,
+    registered_date TEXT NOT NULL,
+    processed INTEGER DEFAULT 0,
+    registrant_email TEXT,     -- NULL or privacy email
+    registrar TEXT,
+    nameservers TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(domain)
+);
 
 CREATE TABLE IF NOT EXISTS nrd_progress (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

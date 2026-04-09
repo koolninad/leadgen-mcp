@@ -255,39 +255,64 @@ async def _try_multi_lookup(
         return None
 
 
-async def save_whois_to_db(domain: str, whois_data: dict) -> None:
-    """Save parsed WHOIS data back to the nrd_domains table."""
+PRIVACY_KEYWORDS = [
+    "privacy", "proxy", "whoisguard", "protect", "redacted",
+    "domainsbyproxy", "contactprivacy", "withheld", "not disclosed",
+    "data protected", "gdpr", "registrant not",
+]
+
+
+def _has_real_email(email: str | None) -> bool:
+    """Check if email is a real registrant email (not privacy/proxy)."""
+    if not email or "@" not in email:
+        return False
+    email_lower = email.lower()
+    return not any(kw in email_lower for kw in PRIVACY_KEYWORDS)
+
+
+async def save_whois_to_db(domain: str, whois_data: dict, registered_date: str = "") -> None:
+    """Save WHOIS data — real emails go to nrd_domains, rest to nrd_domains_ref."""
     db = await _get_nrd_db()
     try:
-        # Store the raw response as JSON, extract key fields
         raw_json = json.dumps(whois_data.get("raw", {}), default=str)
         nameservers_json = json.dumps(whois_data.get("nameservers", []))
+        registrant_email = whois_data.get("registrant_email")
+        tld = domain.rsplit(".", 1)[-1] if "." in domain else ""
 
-        await db.execute(
-            """UPDATE nrd_domains SET
-                whois_data = ?,
-                registrant_email = ?,
-                registrant_name = ?,
-                registrant_org = ?,
-                registrar = ?,
-                creation_date = ?,
-                expiry_date = ?,
-                nameservers = ?,
-                processed = 1,
-                updated_at = datetime('now')
-               WHERE domain = ?""",
-            (
-                raw_json,
-                whois_data.get("registrant_email"),
-                whois_data.get("registrant_name"),
-                whois_data.get("registrant_org"),
-                whois_data.get("registrar"),
-                whois_data.get("creation_date"),
-                whois_data.get("expiry_date"),
-                nameservers_json,
-                domain,
-            ),
-        )
+        if _has_real_email(registrant_email):
+            # Actionable lead → nrd_domains
+            await db.execute(
+                """INSERT OR REPLACE INTO nrd_domains
+                   (domain, tld, registered_date, whois_data, registrant_email,
+                    registrant_name, registrant_org, registrar, creation_date,
+                    expiry_date, nameservers)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    domain, tld, registered_date or "", raw_json,
+                    registrant_email,
+                    whois_data.get("registrant_name"),
+                    whois_data.get("registrant_org"),
+                    whois_data.get("registrar"),
+                    whois_data.get("creation_date"),
+                    whois_data.get("expiry_date"),
+                    nameservers_json,
+                ),
+            )
+        else:
+            # No actionable email → reference table only
+            await db.execute(
+                """INSERT OR IGNORE INTO nrd_domains_ref
+                   (domain, tld, registered_date, processed, registrant_email,
+                    registrar, nameservers)
+                   VALUES (?, ?, ?, 1, ?, ?, ?)""",
+                (
+                    domain, tld, registered_date or "", registrant_email,
+                    whois_data.get("registrar"), nameservers_json,
+                ),
+            )
+            # Also remove from nrd_domains if it was there from initial ingest
+            await db.execute("DELETE FROM nrd_domains WHERE domain = ?", (domain,))
+
         await db.commit()
     finally:
         await db.close()
