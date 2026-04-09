@@ -398,9 +398,20 @@ class LeadGenPipeline:
                 logger.info("Step 2d/6: Emailing %d hot NRD leads...", len(nrd_hot))
                 await self.generate_and_send(nrd_hot, stats)
 
+            # Send ALL NRD leads to Telegram immediately (don't wait for platform crawls)
+            for i, lead in enumerate(nrd_scored, 1):
+                try:
+                    await send_lead_notification(lead, lead_number=i)
+                except Exception as e:
+                    logger.debug("Telegram NRD notification failed: %s", e)
+            try:
+                await flush_queue()
+            except Exception:
+                pass
+
             all_leads.extend(nrd_scored)
-            logger.info("  NRD pipeline: %d scanned, %d enriched, %d hot emailed",
-                         len(nrd_leads), stats.leads_enriched, len(nrd_hot) if nrd_leads else 0)
+            logger.info("  NRD pipeline: %d scanned, %d enriched, %d hot emailed, %d sent to Telegram",
+                         len(nrd_leads), stats.leads_enriched, len(nrd_hot) if nrd_leads else 0, len(nrd_scored))
 
         # ============================================================
         # PRIORITY 2: Platform crawlers (Reddit, HN, IndieHackers, etc.)
