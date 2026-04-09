@@ -152,43 +152,66 @@ def _parse_date(value) -> datetime | None:
     return None
 
 
-async def scan_new_domains_feed(tld: str = "com", days_back: int = 7) -> list[dict]:
-    """Fetch newly registered domains from public NRD (Newly Registered Domain) feeds.
+async def scan_new_domains_feed(tld: str = "com", days_back: int = 3) -> list[dict]:
+    """Fetch newly registered domains from multiple NRD sources.
 
-    Uses the WhoisDS free daily feed or similar public sources.
+    Tries multiple free NRD feeds in order of reliability.
     """
-    results = []
-    base_url = "https://whoisds.com/newly-registered-domains"
-
     now = datetime.now(timezone.utc)
     domains_found = []
 
+    # Source 1: WhoisDS downloadable zip feeds
+    # Format: https://whoisds.com/whois-database/newly-registered-domains/YYYY-MM-DD.zip
     try:
-        async with create_client(timeout=30.0) as client:
-            # Try the free daily feed from whoisds.com (provides zip of domains)
+        async with create_client(timeout=15.0, use_ipv6=False) as client:
             for day_offset in range(days_back):
-                date = now - timedelta(days=day_offset)
+                date = now - timedelta(days=day_offset + 1)
                 date_str = date.strftime("%Y-%m-%d")
-                feed_url = f"https://whoisds.com/whois-database/newly-registered-domains/{date_str}.{tld}/nrd"
 
-                try:
-                    resp = await client.get(feed_url)
-                    if resp.status_code == 200:
-                        text = resp.text
-                        for line in text.strip().split("\n"):
-                            domain = line.strip().lower()
-                            if domain and domain.endswith(f".{tld}"):
-                                domains_found.append({
-                                    "domain": domain,
-                                    "registered_date": date_str,
-                                    "tld": tld,
-                                    "signal": "newly_registered",
-                                })
-                except httpx.RequestError:
-                    continue
+                # Try multiple URL formats
+                urls = [
+                    f"https://whoisds.com/whois-database/newly-registered-domains/{date_str}.{tld}/nrd",
+                    f"https://newly-registered-domains.adrustd.com/{date_str}/{tld}.txt",
+                ]
 
-    except Exception as e:
-        return [{"error": f"Failed to fetch NRD feed: {e}"}]
+                for feed_url in urls:
+                    try:
+                        resp = await asyncio.wait_for(client.get(feed_url), timeout=10)
+                        if resp.status_code == 200 and len(resp.text) > 10:
+                            for line in resp.text.strip().split("\n"):
+                                domain = line.strip().lower()
+                                if domain and "." in domain and len(domain) > 3 and not domain.startswith("#"):
+                                    domains_found.append({
+                                        "domain": domain,
+                                        "registered_date": date_str,
+                                        "tld": tld,
+                                        "signal": "newly_registered",
+                                    })
+                            if domains_found:
+                                break
+                    except (httpx.RequestError, asyncio.TimeoutError):
+                        continue
+                if domains_found:
+                    break
+    except Exception:
+        pass
 
-    # Limit to a reasonable number
-    return domains_found[:500]
+    # Source 2: Use SearXNG to find recently registered domains
+    if not domains_found:
+        try:
+            from ..utils.search import web_search
+            results = await web_search(f"newly registered .{tld} domains today", max_results=10)
+            for r in results:
+                url = r.get("url", "")
+                if url and f".{tld}" in url:
+                    domain = url.split("//")[-1].split("/")[0].lower()
+                    if domain.endswith(f".{tld}"):
+                        domains_found.append({
+                            "domain": domain,
+                            "tld": tld,
+                            "signal": "newly_registered",
+                        })
+        except Exception:
+            pass
+
+    return domains_found[:200]

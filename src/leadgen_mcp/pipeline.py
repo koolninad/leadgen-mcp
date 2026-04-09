@@ -349,7 +349,9 @@ class LeadGenPipeline:
             nrd_count = 0
             for tld in ALL_TLDS:
                 try:
-                    new_domains = await scan_new_domains_feed(tld=tld, days_back=3)
+                    new_domains = await asyncio.wait_for(
+                        scan_new_domains_feed(tld=tld, days_back=3), timeout=15
+                    )
                     for domain_info in (new_domains or [])[:10]:
                         domain = domain_info if isinstance(domain_info, str) else domain_info.get("domain", "")
                         if domain:
@@ -366,11 +368,13 @@ class LeadGenPipeline:
                                 nrd_count += 1
                     if new_domains:
                         logger.info("  .%s: %d new domains", tld, len(new_domains))
+                except asyncio.TimeoutError:
+                    continue
                 except Exception as e:
-                    logger.debug("  .%s failed: %s", tld, e)
+                    continue
             logger.info("  Total NRDs found: %d", nrd_count)
         except Exception as e:
-            logger.debug("NRD scan failed: %s", e)
+            logger.warning("NRD scan failed: %s", e)
 
         # Scan, enrich, score NRD leads immediately (they have domains)
         if nrd_leads:
