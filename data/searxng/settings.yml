@@ -1,0 +1,40 @@
+use_default_settings: true
+
+general:
+  instance_name: "LeadGen Search"
+
+search:
+  safe_search: 0
+  default_lang: "en"
+  formats:
+    - html
+    - json
+
+server:
+  secret_key: "leadgen-secret-change-me"
+  limiter: false  # We're self-hosted, no need to rate limit ourselves
+
+engines:
+  # Enable the best engines for lead gen
+  - name: google
+    engine: google
+    shortcut: g
+    disabled: false
+  - name: bing
+    engine: bing
+    shortcut: b
+    disabled: false
+  - name: duckduckgo
+    engine: duckduckgo
+    shortcut: ddg
+    disabled: false
+  - name: reddit
+    engine: reddit
+    shortcut: re
+    disabled: false
+    categories: social media
+  - name: github
+    engine: github
+    shortcut: gh
+    disabled: false
+    categories: it

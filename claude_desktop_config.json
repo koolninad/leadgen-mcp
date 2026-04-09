@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "leadgen-mcp": {
+      "command": "C:\\Python311\\python.exe",
+      "args": ["-m", "leadgen_mcp.server"],
+      "env": {
+        "PYTHONPATH": "E:\\tp\\src"
+      }
+    }
+  }
+}

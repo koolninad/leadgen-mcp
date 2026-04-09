@@ -1,0 +1,39 @@
+{
+  "tech_opportunity": {
+    "max_score": 30,
+    "outdated_tech_per_item": 5,
+    "security_critical": 8,
+    "security_warning": 3,
+    "performance_critical": 6,
+    "performance_warning": 2,
+    "missing_feature_high": 4,
+    "missing_feature_medium": 2
+  },
+  "budget_signal": {
+    "max_score": 25,
+    "has_explicit_budget": 10,
+    "budget_above_10k": 8,
+    "budget_above_50k": 15,
+    "large_company": 8,
+    "medium_company": 5
+  },
+  "engagement_readiness": {
+    "max_score": 20,
+    "recent_project_posting": 8,
+    "actively_hiring": 6,
+    "recently_funded": 8,
+    "new_product_launch": 5
+  },
+  "contact_quality": {
+    "max_score": 15,
+    "has_verified_email": 8,
+    "has_decision_maker": 7,
+    "has_any_email": 3
+  },
+  "fit_score": {
+    "max_score": 10,
+    "needs_developer": 5,
+    "enterprise_project": 3,
+    "startup_building_mvp": 4
+  }
+}

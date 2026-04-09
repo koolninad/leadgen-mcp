@@ -1,0 +1,12 @@
+version: '3.8'
+services:
+  searxng:
+    image: searxng/searxng:latest
+    container_name: leadgen-searxng
+    ports:
+      - "8888:8080"
+    environment:
+      - SEARXNG_BASE_URL=http://localhost:8888
+    volumes:
+      - ./data/searxng:/etc/searxng
+    restart: unless-stopped

@@ -1,0 +1,21 @@
+[
+  "{first}@{domain}",
+  "{first}.{last}@{domain}",
+  "{first}{last}@{domain}",
+  "{f}{last}@{domain}",
+  "{first}_{last}@{domain}",
+  "{first}-{last}@{domain}",
+  "{f}.{last}@{domain}",
+  "{first}{f}@{domain}",
+  "{last}@{domain}",
+  "{last}.{first}@{domain}",
+  "{f}{last}@{domain}",
+  "info@{domain}",
+  "contact@{domain}",
+  "hello@{domain}",
+  "sales@{domain}",
+  "support@{domain}",
+  "admin@{domain}",
+  "team@{domain}",
+  "business@{domain}"
+]

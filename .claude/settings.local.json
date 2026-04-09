@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "Bash(python -c \":*)",
+      "Bash(python3 -c \":*)",
+      "Bash(python3 -c \"from leadgen_mcp.server import mcp; print\\(''Server loaded OK''\\); print\\(''Name:'', mcp.name\\)\")",
+      "Bash(python3 -c \"import sys; sys.path.insert\\(0, ''src''\\); from leadgen_mcp.server import mcp; print\\(''Server loaded OK''\\); print\\(''Name:'', mcp.name\\)\")",
+      "Bash(C:/Python311/python.exe -c \"import sys; sys.path.insert\\(0, 'E:/tp/src'\\); from leadgen_mcp.server import mcp; print\\('Server loaded OK'\\); print\\('Name:', mcp.name\\)\")",
+      "Bash(C:/Python311/python.exe -c \"\nimport inspect, sys\nsys.path.insert\\(0, 'C:/Users/Admin/AppData/Roaming/Python/Python311/site-packages'\\)\nfrom fastmcp import FastMCP\nsig = inspect.signature\\(FastMCP.__init__\\)\nprint\\(sig\\)\n\")",
+      "Bash(C:/Python311/python.exe -c \"\nimport sys, asyncio\nsys.path.insert\\(0, 'E:/tp/src'\\)\nfrom leadgen_mcp.server import mcp\n\nasync def main\\(\\):\n    tools = await mcp.list_tools\\(\\)\n    print\\(f'Total tools registered: {len\\(tools\\)}'\\)\n    print\\(\\)\n    for t in sorted\\(tools, key=lambda x: x.name\\):\n        print\\(f'  - {t.name}'\\)\n\nasyncio.run\\(main\\(\\)\\)\n\")",
+      "Bash(C:/Python311/python.exe -c \":*)",
+      "Bash(C:/Python311/python.exe:*)",
+      "Bash(curl -s --connect-timeout 3 http://localhost:11434/api/tags)",
+      "Bash(curl -s http://localhost:11434/api/chat -d '{\"\"\"\"model\"\"\"\":\"\"\"\"gemma4:26b\"\"\"\",\"\"\"\"messages\"\"\"\":[{\"\"\"\"role\"\"\"\":\"\"\"\"user\"\"\"\",\"\"\"\"content\"\"\"\":\"\"\"\"Say hello in one sentence.\"\"\"\"}],\"\"\"\"stream\"\"\"\":false}' --connect-timeout 5 -m 120)",
+      "Bash(ls E:/tp/src/leadgen_mcp/domain_intel/*.py)",
+      "Bash(ls E:/tp/src/leadgen_mcp/platforms/*.py)",
+      "Bash(gh auth:*)"
+    ]
+  }
+}

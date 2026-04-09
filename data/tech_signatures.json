@@ -1,0 +1,5 @@
+{
+  "_description": "Technology detection signatures. Format matches Wappalyzer-style patterns.",
+  "_note": "The actual signatures are loaded from scanner/tech_detector.py defaults if this file is empty.",
+  "version": "1.0.0"
+}
