@@ -347,10 +347,15 @@ class LeadGenPipeline:
         try:
             from .domain_intel.whois_scanner import scan_new_domains_feed
             nrd_count = 0
+            nrd_start = time.monotonic()
+            NRD_MAX_TIME = 300  # max 5 minutes total for all TLDs
             for tld in ALL_TLDS:
+                if time.monotonic() - nrd_start > NRD_MAX_TIME:
+                    logger.info("  NRD scan time limit reached (5 min), moving on...")
+                    break
                 try:
                     new_domains = await asyncio.wait_for(
-                        scan_new_domains_feed(tld=tld, days_back=3), timeout=15
+                        scan_new_domains_feed(tld=tld, days_back=3), timeout=10
                     )
                     for domain_info in (new_domains or [])[:10]:
                         domain = domain_info if isinstance(domain_info, str) else domain_info.get("domain", "")
