@@ -34,7 +34,7 @@ from .enrichment.scoring import score_lead
 from .ai.email_generator import generate_outreach_email
 from .email_sender.campaign import send_single_email
 from .utils.validators import normalize_url, extract_domain
-from .notifications.telegram import send_lead_notification, send_cycle_summary
+from .notifications.telegram import send_lead_notification, send_cycle_summary, flush_queue
 
 logger = logging.getLogger("leadgen.pipeline")
 
@@ -322,13 +322,12 @@ class LeadGenPipeline:
                      len(hot_leads), self.config.min_score_to_email)
         await self.generate_and_send(hot_leads, stats)
 
-        # Send Telegram notifications for hot/warm leads
-        warm_and_hot = [l for l in scored if l.get("_score_total", 0) >= 40]
-        for lead in warm_and_hot:
+        # Send Telegram notification for EVERY lead with full details
+        for i, lead in enumerate(scored, 1):
             try:
-                await send_lead_notification(lead)
+                await send_lead_notification(lead, lead_number=i)
             except Exception as e:
-                logger.debug("Telegram notification failed for lead: %s", e)
+                logger.debug("Telegram notification failed for lead %d: %s", i, e)
 
         stats.finished_at = datetime.now(timezone.utc).isoformat()
         stats.duration_seconds = time.monotonic() - t0
@@ -342,6 +341,12 @@ class LeadGenPipeline:
             await send_cycle_summary(stats.to_dict())
         except Exception as e:
             logger.debug("Telegram cycle summary failed: %s", e)
+
+        # Wait for all Telegram messages to be sent
+        try:
+            await flush_queue()
+        except Exception as e:
+            logger.debug("Telegram queue flush failed: %s", e)
 
         return stats
 
