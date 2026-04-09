@@ -170,7 +170,7 @@ def _get_footer() -> str:
     return f"""
 
 ---
-{settings.agency_name} | {settings.agency_website}
+{settings.agency_name}
 {settings.agency_address}
 If you'd rather not hear from us, just reply "unsubscribe" and we'll remove you immediately."""
 

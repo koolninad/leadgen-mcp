@@ -16,7 +16,8 @@
       "Bash(curl -s http://localhost:11434/api/chat -d '{\"\"\"\"model\"\"\"\":\"\"\"\"gemma4:26b\"\"\"\",\"\"\"\"messages\"\"\"\":[{\"\"\"\"role\"\"\"\":\"\"\"\"user\"\"\"\",\"\"\"\"content\"\"\"\":\"\"\"\"Say hello in one sentence.\"\"\"\"}],\"\"\"\"stream\"\"\"\":false}' --connect-timeout 5 -m 120)",
       "Bash(ls E:/tp/src/leadgen_mcp/domain_intel/*.py)",
       "Bash(ls E:/tp/src/leadgen_mcp/platforms/*.py)",
-      "Bash(gh auth:*)"
+      "Bash(gh auth:*)",
+      "Bash(ls -la /Users/ninad/Desktop/projects/leadgen-mcp/src/leadgen_mcp/platforms/*.py)"
     ]
   }
 }
