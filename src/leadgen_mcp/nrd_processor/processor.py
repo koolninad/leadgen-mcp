@@ -654,16 +654,46 @@ async def _process_high_score_domains(
             )
             await db.commit()
 
-            # Send email
+            # Send email (with sender rotation if PG available)
             if not dry_run:
                 try:
-                    body_html = text_to_html(email_result["body"])
-                    send_result = await send_email(
-                        to_email=email_to,
-                        subject=email_result["subject"],
-                        body_html=body_html,
-                        track=True,
-                    )
+                    sender = None
+                    sender_email = settings.smtp_from_email or settings.smtp_user
+
+                    # Try sender rotation
+                    if settings.database_url:
+                        try:
+                            from ..email_sender.rotation import pick_sender, record_send
+                            recipient_domain = email_to.split("@")[1] if "@" in email_to else None
+                            sender = await pick_sender(recipient_domain=recipient_domain, vertical="hostingduty")
+                        except Exception:
+                            pass
+
+                    if sender:
+                        sender_email = sender["email"]
+                        body_html = text_to_html(email_result["body"])
+                        send_result = await send_email(
+                            to_email=email_to,
+                            subject=email_result["subject"],
+                            body_html=body_html,
+                            from_email=sender["email"],
+                            from_name=sender["display_name"],
+                            smtp_host=sender["smtp_host"],
+                            smtp_port=sender["smtp_port"],
+                            smtp_user=sender["smtp_user"],
+                            smtp_password=sender["smtp_password"],
+                            track=True,
+                        )
+                        if send_result.get("success"):
+                            await record_send(sender["id"])
+                    else:
+                        body_html = text_to_html(email_result["body"])
+                        send_result = await send_email(
+                            to_email=email_to,
+                            subject=email_result["subject"],
+                            body_html=body_html,
+                            track=True,
+                        )
 
                     if send_result.get("success"):
                         stats["emails_sent"] += 1
@@ -674,7 +704,7 @@ async def _process_high_score_domains(
                             (domain_data["id"],),
                         )
                         await db.commit()
-                        logger.info("  Sent email to %s for %s", email_to, domain)
+                        logger.info("  Sent email to %s for %s (from: %s)", email_to, domain, sender_email)
                     else:
                         logger.warning("  Email send failed: %s", send_result.get("error"))
                         stats["errors"] += 1
@@ -703,7 +733,7 @@ async def _process_high_score_domains(
                     "_verticals": ["hostingduty", "chandorkar"],
                     "_email_status": "dry_run" if dry_run else "sent",
                     "_email_to": email_to,
-                    "_email_from": settings.smtp_from_email or settings.smtp_user,
+                    "_email_from": sender_email if not dry_run else (settings.smtp_from_email or settings.smtp_user),
                     "_email_subject": email_result.get("subject", ""),
                     "_email_body": email_result.get("body", ""),
                 }
