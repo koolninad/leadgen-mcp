@@ -447,8 +447,9 @@ class LeadGenPipeline:
                 logger.info("Step 2d/6: Emailing %d hot NRD leads...", len(nrd_hot))
                 await self.generate_and_send(nrd_hot, stats)
 
-            # Send ALL NRD leads to Telegram immediately (don't wait for platform crawls)
-            for i, lead in enumerate(nrd_scored, 1):
+            # Only send Telegram for NRD leads that got emailed
+            emailed_nrds = [l for l in nrd_scored if l.get("_email_status") in ("sent", "dry_run")]
+            for i, lead in enumerate(emailed_nrds, 1):
                 try:
                     await send_lead_notification(lead, lead_number=i)
                 except Exception as e:
@@ -495,11 +496,16 @@ class LeadGenPipeline:
             logger.info("Emailing %d hot platform leads...", len(hot_leads))
             await self.generate_and_send(hot_leads, stats)
 
+        # For social leads without emails — enqueue comments
+        if settings.database_url:
+            await self._enqueue_social_comments(scored, stats)
+
         all_leads.extend(scored)
         scored = all_leads
 
-        # Send Telegram notification for EVERY lead with full details
-        for i, lead in enumerate(scored, 1):
+        # Only send Telegram for leads that actually got emailed
+        emailed_leads = [l for l in scored if l.get("_email_status") in ("sent", "dry_run")]
+        for i, lead in enumerate(emailed_leads, 1):
             try:
                 await send_lead_notification(lead, lead_number=i)
             except Exception as e:
@@ -512,7 +518,7 @@ class LeadGenPipeline:
         for line in stats.summary_lines():
             logger.info(line)
 
-        # Send cycle summary to Telegram
+        # Always send cycle summary to Telegram (one message)
         try:
             await send_cycle_summary(stats.to_dict())
         except Exception as e:
@@ -853,3 +859,50 @@ class LeadGenPipeline:
             except Exception as e:
                 logger.error("  Email flow failed for lead %s: %s", lead_id, e)
                 stats.emails_failed += 1
+
+    SOCIAL_PLATFORMS = {"reddit", "hackernews", "indiehackers", "quora", "linkedin", "producthunt"}
+
+    async def _enqueue_social_comments(self, leads: list[dict], stats: CycleStats):
+        """Enqueue auto-comments for social platform leads that have no email."""
+        from .outreach.auto_comment import enqueue_comment
+
+        comment_count = 0
+        for lead in leads:
+            source = lead.get("source_platform", lead.get("source", ""))
+            if source not in self.SOCIAL_PLATFORMS:
+                continue
+
+            # Skip if we already have emails for this lead
+            lead_id = lead.get("lead_id") or lead.get("id")
+            if not lead_id:
+                continue
+
+            contacts = await get_contacts(lead_id)
+            has_email = any(c.get("email") for c in contacts)
+            if has_email:
+                continue  # Will be emailed, no need to comment
+
+            # Skip low-scoring leads (at least 10 to be worth commenting)
+            score = lead.get("_score_total", 0)
+            if score < 10:
+                continue
+
+            source_url = lead.get("source_url", lead.get("url", lead.get("raw_url", "")))
+            if not source_url:
+                continue
+
+            title = lead.get("company_name", "")
+            description = lead.get("description", "")
+
+            job_id = await enqueue_comment(
+                lead_id=lead_id,
+                platform=source,
+                post_url=source_url,
+                title=title,
+                description=description,
+            )
+            if job_id:
+                comment_count += 1
+
+        if comment_count:
+            logger.info("  Enqueued %d social comments", comment_count)

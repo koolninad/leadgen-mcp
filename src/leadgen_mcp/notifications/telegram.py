@@ -217,6 +217,7 @@ def _format_lead_card(lead: dict, lead_number: int = 0) -> str:
             "not_sent": "\u2796",
             "dry_run": "\U0001f6ab",
             "replied": "\U0001f4e9",
+            "comment_generated": "\U0001f4ac",
         }.get(email_status, "\u2753")
 
         lines.append(f"{status_emoji} EMAIL: {email_status.upper()}")

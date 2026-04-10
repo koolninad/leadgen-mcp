@@ -446,4 +446,12 @@ def create_default_worker() -> QueueWorker:
     worker.register_handler("score", handle_score)
     worker.register_handler("email_generate", handle_email_generate)
     worker.register_handler("email_send", handle_email_send)
+
+    # Social comment handler
+    try:
+        from .outreach.auto_comment import handle_comment_job
+        worker.register_handler("comment", handle_comment_job)
+    except ImportError:
+        pass
+
     return worker
