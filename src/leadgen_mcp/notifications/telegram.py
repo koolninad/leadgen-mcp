@@ -397,6 +397,88 @@ async def send_cycle_summary(stats_dict: dict) -> dict:
     return {"success": True, "queued": True}
 
 
+async def send_warmup_summary(stats: dict) -> dict:
+    """Queue a warmup cycle summary notification."""
+    if not _is_configured():
+        return {"success": False, "error": "Telegram not configured"}
+
+    text = _format_warmup_summary(stats)
+    _queue.enqueue(text)
+    return {"success": True, "queued": True}
+
+
+async def send_queue_status(stats: dict) -> dict:
+    """Queue a job queue status notification."""
+    if not _is_configured():
+        return {"success": False, "error": "Telegram not configured"}
+
+    text = _format_queue_status(stats)
+    _queue.enqueue(text)
+    return {"success": True, "queued": True}
+
+
+def _format_warmup_summary(stats: dict) -> str:
+    """Format warmup cycle summary for Telegram."""
+    lines = [
+        "\U0001f321\ufe0f WARMUP CYCLE",
+        f"{'━' * 30}",
+        "",
+    ]
+
+    sent = stats.get("warmup_emails_sent", 0)
+    replies = stats.get("seed_replies", 0)
+    graduated = stats.get("graduated", 0)
+    demoted = stats.get("demoted", 0)
+    reactivated = stats.get("reactivated", 0)
+    quotas = stats.get("quotas_adjusted", 0)
+
+    lines.append(f"\U0001f4e8 Warmup emails sent: {sent}")
+    lines.append(f"\U0001f4e9 Seed replies: {replies}")
+
+    if quotas:
+        lines.append(f"\U0001f4c8 Quotas adjusted: {quotas}")
+
+    if graduated:
+        lines.append(f"\U0001f389 Graduated to active: {graduated}")
+    if demoted:
+        lines.append(f"\u26a0\ufe0f Demoted to cooling: {demoted}")
+    if reactivated:
+        lines.append(f"\u267b\ufe0f Reactivated: {reactivated}")
+
+    # Pool summary if available
+    pools = stats.get("pools", {})
+    if pools:
+        lines.append("")
+        lines.append("\U0001f4ca Pools:")
+        for pool_name, count in pools.items():
+            emoji = {"warming": "\U0001f321\ufe0f", "active": "\u2705", "cooling": "\u2744\ufe0f"}.get(pool_name, "\U0001f4cb")
+            lines.append(f"  {emoji} {pool_name}: {count}")
+
+    return "\n".join(lines)
+
+
+def _format_queue_status(stats: dict) -> str:
+    """Format job queue status for Telegram."""
+    lines = [
+        "\U0001f4e6 JOB QUEUE STATUS",
+        f"{'━' * 30}",
+        "",
+    ]
+
+    pending = stats.get("pending", 0)
+    processing = stats.get("processing", 0)
+    completed = stats.get("completed", 0)
+    failed = stats.get("failed", 0)
+
+    lines.append(f"\u23f3 Pending: {pending}")
+    lines.append(f"\u2699\ufe0f Processing: {processing}")
+    lines.append(f"\u2705 Completed: {completed}")
+    if failed:
+        lines.append(f"\u274c Failed: {failed}")
+
+    return "\n".join(lines)
+
+
 async def flush_queue():
     """Wait for all queued Telegram messages to be sent."""
     await _queue.flush()

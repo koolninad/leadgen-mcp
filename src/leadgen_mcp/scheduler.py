@@ -92,6 +92,16 @@ class PipelineScheduler:
         except Exception as e:
             logger.warning("Failed to start IMAP aggregator: %s", e)
 
+        # Start queue worker (processes enrich/score/email_generate/email_send)
+        try:
+            from .queue import create_default_worker
+            worker = create_default_worker()
+            task = asyncio.create_task(worker.run_forever())
+            self._background_tasks.append(task)
+            logger.info("Queue worker started")
+        except Exception as e:
+            logger.warning("Failed to start queue worker: %s", e)
+
     async def _stop_background_services(self):
         """Stop all background tasks."""
         for task in self._background_tasks:

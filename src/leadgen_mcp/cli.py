@@ -1193,6 +1193,79 @@ def sender_status():
 
 
 # ---------------------------------------------------------------------------
+# Queue management
+# ---------------------------------------------------------------------------
+
+@cli.command("queue-status")
+def queue_status_cmd():
+    """Show job queue statistics."""
+    from .config import settings
+    if not settings.database_url:
+        console.print("[red]DATABASE_URL not set[/red]")
+        return
+
+    from .queue import queue_stats
+
+    async def _run():
+        stats = await queue_stats()
+        from rich.table import Table
+        table = Table(title="Job Queue")
+        table.add_column("Status")
+        table.add_column("Count", justify="right")
+        for status in ["pending", "processing", "completed", "failed", "retry"]:
+            color = {"pending": "yellow", "processing": "cyan", "completed": "green",
+                      "failed": "red", "retry": "magenta"}.get(status, "white")
+            table.add_row(f"[{color}]{status}[/{color}]", str(stats.get(status, 0)))
+        console.print(table)
+
+        by_type = stats.get("by_type", {})
+        if by_type:
+            console.print("\nBy type:")
+            for key, count in sorted(by_type.items()):
+                console.print(f"  {key}: {count}")
+
+    _run_async(_run())
+
+
+@cli.command("queue-worker")
+def queue_worker_cmd():
+    """Start a standalone queue worker."""
+    from .config import settings
+    if not settings.database_url:
+        console.print("[red]DATABASE_URL not set[/red]")
+        return
+
+    from .queue import create_default_worker
+    console.print(Panel("Starting queue worker...\nPress Ctrl+C to stop.",
+                         title="Queue Worker", border_style="cyan"))
+
+    async def _run():
+        worker = create_default_worker()
+        await worker.run_forever()
+
+    _run_async(_run())
+
+
+@cli.command("queue-cleanup")
+@click.option("--purge-days", default=7, help="Purge completed jobs older than N days")
+def queue_cleanup_cmd(purge_days):
+    """Cleanup stale/old jobs from the queue."""
+    from .config import settings
+    if not settings.database_url:
+        console.print("[red]DATABASE_URL not set[/red]")
+        return
+
+    from .queue import cleanup_stale_jobs, purge_completed
+
+    async def _run():
+        stale = await cleanup_stale_jobs()
+        purged = await purge_completed(purge_days)
+        console.print(f"Reset {stale} stale jobs, purged {purged} completed jobs (>{purge_days}d)")
+
+    _run_async(_run())
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 

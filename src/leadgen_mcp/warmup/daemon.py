@@ -188,6 +188,21 @@ class WarmupDaemon:
             count = await reset_daily_counters()
             logger.info("  Reset daily counters for %d accounts", count)
 
+        # Get pool counts for Telegram
+        senders = await get_all_senders()
+        pool_counts = {}
+        for s in senders:
+            pool_counts[s["pool"]] = pool_counts.get(s["pool"], 0) + 1
+        stats["pools"] = pool_counts
+
+        # Send summary to Telegram
+        try:
+            from ..notifications.telegram import send_warmup_summary, flush_queue
+            await send_warmup_summary(stats)
+            await flush_queue()
+        except Exception as e:
+            logger.debug("Warmup Telegram notification failed: %s", e)
+
         logger.info("=== Warmup cycle %d complete: sent=%d replies=%d graduated=%d ===",
                      self._cycle_count, stats["warmup_emails_sent"],
                      stats["seed_replies"], stats["graduated"])

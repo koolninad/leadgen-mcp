@@ -256,6 +256,32 @@ CREATE TABLE IF NOT EXISTS crawler_runs (
 
 CREATE INDEX IF NOT EXISTS idx_crawler_name ON crawler_runs(crawler_name);
 CREATE INDEX IF NOT EXISTS idx_crawler_started ON crawler_runs(started_at DESC);
+
+-- Job queue: decouples fast crawling from slow email generation
+CREATE TABLE IF NOT EXISTS job_queue (
+    id SERIAL PRIMARY KEY,
+    job_type TEXT NOT NULL,             -- 'email_generate', 'email_send', 'enrich', 'score'
+    lead_id TEXT REFERENCES leads(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'pending', -- 'pending', 'processing', 'completed', 'failed', 'retry'
+    priority INTEGER DEFAULT 0,         -- higher = process first
+    payload JSONB DEFAULT '{}'::jsonb,  -- job-specific data
+    result JSONB,                       -- output after completion
+    attempts INTEGER DEFAULT 0,
+    max_attempts INTEGER DEFAULT 3,
+    error_message TEXT,
+    locked_by TEXT,                     -- worker ID that claimed this job
+    locked_at TIMESTAMPTZ,
+    scheduled_at TIMESTAMPTZ DEFAULT NOW(), -- when to run (for delayed jobs)
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    completed_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_job_pending ON job_queue(status, priority DESC, scheduled_at)
+    WHERE status IN ('pending', 'retry');
+CREATE INDEX IF NOT EXISTS idx_job_lead ON job_queue(lead_id);
+CREATE INDEX IF NOT EXISTS idx_job_type ON job_queue(job_type, status);
+CREATE INDEX IF NOT EXISTS idx_job_locked ON job_queue(locked_by, locked_at)
+    WHERE status = 'processing';
 """
 
 
