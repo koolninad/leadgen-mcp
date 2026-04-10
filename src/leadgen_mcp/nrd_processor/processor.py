@@ -383,16 +383,63 @@ async def run_nrd_pipeline(
         stats["errors"] += 1
         return stats
 
-    # --- Step 3: WHOIS lookups ---
-    logger.info("[Step 3/5] Running WHOIS lookups on unprocessed domains...")
-    await _process_whois_batches(batch_size, whois_concurrency, stats)
+    # --- Steps 3-5: WHOIS → Score → Email in rolling batches ---
+    # Instead of doing ALL WHOIS first, process in chunks:
+    # Every N WHOIS batches, score what we have and email high-scorers
+    logger.info("[Steps 3-5] WHOIS → Score → Email (rolling batches)...")
+    SCORE_EVERY_N_BATCHES = 10  # Score + email after every 10 WHOIS batches
 
-    # --- Step 4: Score all unscored domains ---
-    logger.info("[Step 4/5] Scoring domains...")
+    db = await _get_nrd_db()
+    batch_count = 0
+    try:
+        while True:
+            rows = await db.execute_fetchall(
+                """SELECT domain, registered_date FROM nrd_staging
+                   WHERE processed = 0
+                   ORDER BY registered_date DESC
+                   LIMIT ?""",
+                (batch_size,),
+            )
+            if not rows:
+                break
+
+            domains = [dict(r)["domain"] for r in rows]
+            logger.info("  WHOIS batch: %d domains", len(domains))
+
+            try:
+                await process_whois_batch(domains, concurrency=whois_concurrency)
+                stats["whois_lookups"] += len(domains)
+            except Exception as e:
+                logger.error("  WHOIS batch error: %s", e)
+                stats["errors"] += 1
+
+            for d in domains:
+                await db.execute(
+                    "UPDATE nrd_staging SET processed = 1 WHERE domain = ?",
+                    (d,),
+                )
+            await db.commit()
+
+            batch_count += 1
+
+            # Every N batches: score + email what we have so far
+            if batch_count % SCORE_EVERY_N_BATCHES == 0:
+                logger.info("  -- Interim score + email pass (after %d batches) --", batch_count)
+                await _score_domains(stats)
+                await _process_high_score_domains(min_score, dry_run, stats)
+                await flush_queue()
+
+            await asyncio.sleep(0.5)
+    finally:
+        await db.close()
+
+    logger.info("  WHOIS lookups done: %d total in %d batches", stats["whois_lookups"], batch_count)
+
+    # Final score + email pass for any remaining
+    logger.info("[Step 4/5] Final scoring pass...")
     await _score_domains(stats)
 
-    # --- Step 5: Email + Telegram for high-scoring domains ---
-    logger.info("[Step 5/5] Processing high-score domains (>= %d)...", min_score)
+    logger.info("[Step 5/5] Final email pass (>= %d)...", min_score)
     await _process_high_score_domains(min_score, dry_run, stats)
 
     # Flush Telegram queue
@@ -557,11 +604,18 @@ async def _process_high_score_domains(
             if not email_to or "@" not in email_to:
                 continue
 
-            # Skip privacy/proxy emails
+            # Skip privacy/proxy/registrar/hosting emails
             email_lower = email_to.lower()
             if any(kw in email_lower for kw in [
                 "privacy", "proxy", "whoisguard", "protect", "redacted",
-                "domainsbyproxy", "contactprivacy",
+                "domainsbyproxy", "contactprivacy", "anonymize", "whoisprotect",
+                "hugedomains", "wix-domains", "xserver", "apiname", "wdp.services",
+                "namecheap", "godaddy", "domaincontrol", "networksolutions",
+                "tucows", "enom", "register.com", "wild-west", "dreamhost",
+                "hostgator", "bluehost", "ionos", "ovh.net", "gandi.net",
+                "dropcatch", "afternic", "sedo", "dan.com", "whoisblind",
+                "whoistrustee", "withheld", "abuse@", "noreply", "no-reply",
+                "postmaster", "hostmaster", "webmaster",
             ]):
                 continue
 
