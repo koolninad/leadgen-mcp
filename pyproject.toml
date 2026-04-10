@@ -21,6 +21,7 @@ dependencies = [
     "python-dotenv>=1.0",
     "click>=8.0",
     "rich>=13.0",
+    "asyncpg>=0.29",
 ]
 
 [project.optional-dependencies]

@@ -42,6 +42,35 @@ PLATFORM_EMOJI = {
     "g2": "\U0001f4ca",
     "quora": "\u2753",
     "system": "\u2699\ufe0f",
+    "ct_log": "\U0001f510",           # lock
+    "company_registry": "\U0001f3db",  # classical building
+    "yellowpages": "\U0001f4d2",       # ledger
+    "accessibility_scanner": "\u267f",  # wheelchair
+    "broken_sites": "\U0001f6a7",      # construction
+    "tech_debt": "\U0001f9f1",         # brick
+    "nrd": "\U0001f195",              # NEW
+    "new_domain": "\U0001f195",
+    "reply": "\U0001f4e9",            # envelope with arrow
+    "gov_tenders": "\U0001f3db\ufe0f",  # classical building (government)
+    "private_tenders": "\U0001f4dc",    # scroll (RFP/contract)
+}
+
+VERTICAL_EMOJI = {
+    "hostingduty": "\U0001f5a5\ufe0f",    # desktop
+    "chandorkar": "\U0001f4bb",           # laptop
+    "nubo": "\U0001f4e8",                # incoming envelope
+    "vikasit": "\U0001f916",             # robot
+    "setara": "\u26d3\ufe0f",            # chains
+    "staff_aug": "\U0001f465",           # people
+}
+
+VERTICAL_LABEL = {
+    "hostingduty": "HostingDuty",
+    "chandorkar": "Chandorkar Tech",
+    "nubo": "Nubo Email",
+    "vikasit": "Vikasit AI",
+    "setara": "Setara Blockchain",
+    "staff_aug": "Staff Aug",
 }
 
 SCORE_TIER = {
@@ -79,73 +108,71 @@ def _format_lead_card(lead: dict, lead_number: int = 0) -> str:
     score = lead.get("_score_total", lead.get("score"))
     tier, tier_emoji = _score_tier(score)
 
-    # Signals
-    signals = lead.get("signals", [])
-    if isinstance(signals, str):
-        try:
-            signals = json.loads(signals)
-        except Exception:
-            signals = []
+    # Parse JSON fields
+    def _parse_list(val):
+        if isinstance(val, list):
+            return val
+        if isinstance(val, str):
+            try:
+                return json.loads(val)
+            except Exception:
+                return []
+        return []
 
-    # Contacts
-    contacts = lead.get("_contacts", lead.get("contacts", []))
-    if isinstance(contacts, str):
-        try:
-            contacts = json.loads(contacts)
-        except Exception:
-            contacts = []
+    signals = _parse_list(lead.get("signals", []))
+    contacts = _parse_list(lead.get("_contacts", lead.get("contacts", [])))
+    emails = _parse_list(lead.get("_emails", lead.get("emails", [])))
+    verticals = _parse_list(lead.get("_verticals", lead.get("vertical_match", [])))
 
-    # Emails found
-    emails = lead.get("_emails", lead.get("emails", []))
-    if isinstance(emails, str):
-        try:
-            emails = json.loads(emails)
-        except Exception:
-            emails = []
-
-    # AI assessment
     ai_assessment = lead.get("_ai_assessment", lead.get("ai_assessment", ""))
-
-    # Email status
     email_status = lead.get("_email_status", lead.get("email_status", ""))
     email_subject = lead.get("_email_subject", lead.get("email_subject", ""))
-
-    # Scan results
+    email_body = lead.get("_email_body", lead.get("email_body", ""))
+    email_to = lead.get("_email_to", lead.get("email_to", ""))
+    email_from = lead.get("_email_from", lead.get("email_from", ""))
     tech_stack = lead.get("_tech_stack", lead.get("tech_stack", ""))
     security_issues = lead.get("_security_issues", lead.get("security_issues", ""))
 
-    # Truncate
+    # Truncate long fields
     if len(description) > 300:
         description = description[:297] + "..."
     if ai_assessment and len(ai_assessment) > 200:
         ai_assessment = ai_assessment[:197] + "..."
 
-    # Build card
+    # ── Build card ──
     header = f"#{lead_number}" if lead_number else ""
     lines = [
         f"{tier_emoji} {emoji} LEAD {header} — {source.upper()}",
         f"{'━' * 30}",
+        f"\U0001f3e2 {company}",
     ]
-
-    lines.append(f"\U0001f3e2 {company}")
 
     if description:
         lines.append(f"\U0001f4dd {description}")
 
     lines.append("")
 
+    # Verticals
+    if verticals:
+        v_parts = []
+        for v in verticals:
+            v_emoji = VERTICAL_EMOJI.get(v, "\U0001f4cb")
+            v_label = VERTICAL_LABEL.get(v, v)
+            v_parts.append(f"{v_emoji} {v_label}")
+        lines.append(f"\U0001f3af Pitch: {' | '.join(v_parts)}")
+
     if budget:
         lines.append(f"\U0001f4b0 Budget: ${budget:,}")
 
     if score is not None:
-        lines.append(f"\U0001f3af Score: {score}/100 ({tier.upper()})")
+        lines.append(f"\U0001f4ca Score: {score}/100 ({tier.upper()})")
 
     if signals:
         sig_str = " | ".join(str(s) for s in signals[:6])
         lines.append(f"\U0001f6a8 Signals: {sig_str}")
 
     if domain:
-        lines.append(f"\U0001f310 Domain: {domain}")
+        lines.append(f"\U0001f310 {domain}")
 
     if source_url:
         lines.append(f"\U0001f517 {source_url}")
@@ -158,40 +185,59 @@ def _format_lead_card(lead: dict, lead_number: int = 0) -> str:
             if isinstance(c, dict):
                 name = c.get("name", "")
                 title = c.get("title", "")
-                email = c.get("email", "")
-                lines.append(f"  • {name} ({title}) {email}")
+                c_email = c.get("email", "")
+                lines.append(f"  \u2022 {name} ({title}) {c_email}")
             else:
-                lines.append(f"  • {c}")
+                lines.append(f"  \u2022 {c}")
 
     if emails and not contacts:
         lines.append("")
         lines.append(f"\U0001f4e7 Emails: {', '.join(str(e) for e in emails[:5])}")
 
-    # Tech stack
+    # Tech & security
     if tech_stack:
         lines.append(f"\U0001f527 Tech: {tech_stack}")
-
     if security_issues:
         lines.append(f"\u26a0\ufe0f Security: {security_issues}")
 
     # AI assessment
     if ai_assessment:
         lines.append("")
-        lines.append(f"\U0001f916 AI Assessment: {ai_assessment}")
+        lines.append(f"\U0001f916 AI: {ai_assessment}")
 
-    # Email status
+    # ── Email section ──
     if email_status:
+        lines.append("")
+        lines.append(f"{'━' * 30}")
+
         status_emoji = {
             "sent": "\u2705",
             "pending": "\u23f3",
             "failed": "\u274c",
             "not_sent": "\u2796",
             "dry_run": "\U0001f6ab",
+            "replied": "\U0001f4e9",
         }.get(email_status, "\u2753")
-        lines.append("")
-        lines.append(f"{status_emoji} Email: {email_status.upper()}")
+
+        lines.append(f"{status_emoji} EMAIL: {email_status.upper()}")
+
+        if email_from:
+            lines.append(f"\U0001f4e4 From: {email_from}")
+        if email_to:
+            lines.append(f"\U0001f4e5 To: {email_to}")
         if email_subject:
-            lines.append(f"   Subject: {email_subject}")
+            lines.append(f"\U0001f4cc Subject: {email_subject}")
+
+        if email_body:
+            # Truncate body but show enough to be useful
+            body_preview = email_body.strip()
+            if len(body_preview) > 800:
+                body_preview = body_preview[:797] + "..."
+            lines.append("")
+            lines.append(f"\U0001f4dd Email Body:")
+            lines.append(f"{'─' * 25}")
+            lines.append(body_preview)
+            lines.append(f"{'─' * 25}")
 
     return "\n".join(lines)
 

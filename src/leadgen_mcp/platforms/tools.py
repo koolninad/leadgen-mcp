@@ -16,6 +16,14 @@ from .crunchbase import CrunchbaseCrawler
 from .github_projects import GitHubProjectsCrawler
 from .google_maps import GoogleMapsCrawler
 from .quora import QuoraCrawler
+from .ct_log import CTLogCrawler
+from .company_registry import CompanyRegistryCrawler
+from .yellowpages import YellowPagesCrawler
+from .accessibility_scanner import AccessibilityScannerCrawler
+from .broken_sites import BrokenSiteDetector
+from .tech_debt import TechDebtCrawler
+from .gov_tenders import GovTenderCrawler
+from .private_tenders import PrivateTenderCrawler
 from ..db.repository import upsert_lead
 
 
@@ -36,6 +44,14 @@ CRAWLERS = {
     "github": GitHubProjectsCrawler,
     "google_maps": GoogleMapsCrawler,
     "quora": QuoraCrawler,
+    "ct_log": CTLogCrawler,
+    "company_registry": CompanyRegistryCrawler,
+    "yellowpages": YellowPagesCrawler,
+    "accessibility_scanner": AccessibilityScannerCrawler,
+    "broken_sites": BrokenSiteDetector,
+    "tech_debt": TechDebtCrawler,
+    "gov_tenders": GovTenderCrawler,
+    "private_tenders": PrivateTenderCrawler,
 }
 
 

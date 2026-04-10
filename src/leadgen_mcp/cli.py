@@ -1093,6 +1093,106 @@ def _print_cycle_stats(stats):
 
 
 # ---------------------------------------------------------------------------
+# Database migration
+# ---------------------------------------------------------------------------
+
+@cli.command("migrate-db")
+@click.option("--pg-dsn", default=None, help="PostgreSQL DSN (or uses DATABASE_URL from .env)")
+def migrate_db(pg_dsn):
+    """Migrate data from SQLite to PostgreSQL."""
+    from .db.migrate_to_pg import migrate_sqlite_to_pg
+    from .config import settings
+
+    dsn = pg_dsn or settings.database_url
+    if not dsn:
+        console.print("[red]No PostgreSQL DSN. Set DATABASE_URL in .env or pass --pg-dsn[/red]")
+        return
+
+    sqlite_path = settings.db_path
+    console.print(Panel(
+        f"SQLite: {sqlite_path}\nPostgreSQL: {dsn.split('@')[-1]}",
+        title="Database Migration",
+        border_style="cyan",
+    ))
+
+    async def _run():
+        stats = await migrate_sqlite_to_pg(sqlite_path, dsn)
+        lines = [f"[bold]Total rows migrated: {stats['total']}[/bold]", ""]
+        for table, count in stats["tables"].items():
+            lines.append(f"  {table}: {count} rows")
+        console.print(Panel("\n".join(lines), title="Migration Complete", border_style="green"))
+
+    _run_async(_run())
+
+
+@cli.command("add-sender")
+@click.argument("email")
+@click.option("--domain", required=True, help="Email domain")
+@click.option("--name", required=True, help="Display name")
+@click.option("--password", required=True, help="SMTP password")
+@click.option("--smtp-host", default="mail.nubo.email")
+@click.option("--smtp-port", default=587, type=int)
+def add_sender(email, domain, name, password, smtp_host, smtp_port):
+    """Add a sender account for email rotation."""
+    from .config import settings
+    if not settings.database_url:
+        console.print("[red]DATABASE_URL not set — sender accounts require PostgreSQL[/red]")
+        return
+
+    from .db.pg_repository import add_sender_account
+
+    async def _run():
+        result = await add_sender_account(
+            email=email, domain=domain, display_name=name,
+            smtp_user=email, smtp_password=password,
+            smtp_host=smtp_host, smtp_port=smtp_port,
+        )
+        console.print(f"[green]Added sender: {result['email']} (pool: {result['pool']})[/green]")
+
+    _run_async(_run())
+
+
+@cli.command("sender-status")
+def sender_status():
+    """Show all sender accounts and their warmup status."""
+    from .config import settings
+    if not settings.database_url:
+        console.print("[red]DATABASE_URL not set[/red]")
+        return
+
+    from .db.pg_repository import get_all_senders
+
+    async def _run():
+        senders = await get_all_senders()
+        if not senders:
+            console.print("[dim]No sender accounts configured[/dim]")
+            return
+
+        from rich.table import Table
+        table = Table(title="Sender Accounts")
+        table.add_column("Email", style="cyan")
+        table.add_column("Pool")
+        table.add_column("Day")
+        table.add_column("Quota")
+        table.add_column("Sent Today")
+        table.add_column("Total")
+        table.add_column("Rep", justify="right")
+        table.add_column("Bounce%", justify="right")
+
+        for s in senders:
+            pool_color = {"warming": "yellow", "active": "green", "cooling": "red"}.get(s["pool"], "white")
+            table.add_row(
+                s["email"], f"[{pool_color}]{s['pool']}[/{pool_color}]",
+                str(s["warmup_day"]), str(s["daily_quota"]),
+                str(s["sent_today"]), str(s["sent_total"]),
+                f"{s['reputation_score']:.0f}", f"{s['bounce_rate']:.1f}%",
+            )
+        console.print(table)
+
+    _run_async(_run())
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 

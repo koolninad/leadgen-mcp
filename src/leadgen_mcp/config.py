@@ -25,6 +25,9 @@ class Settings(BaseSettings):
 
     # Database
     db_path: str = "./data/leadgen.db"
+    database_url: str = ""  # postgresql://user:pass@host:5432/leadgen
+    pg_pool_min: int = 2
+    pg_pool_max: int = 10
 
     # Tracking
     tracking_base_url: str = "http://localhost:8899"
@@ -60,15 +63,69 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_group_id: str = ""
 
+    # Listmonk
+    listmonk_url: str = "http://localhost:9000"
+    listmonk_username: str = "admin"
+    listmonk_password: str = ""
+
+    # IMAP Aggregate
+    imap_poll_interval: int = 120  # seconds
+    imap_accounts_file: str = "./data/imap_accounts.json"
+
+    # Email Warmup
+    warmup_enabled: bool = True
+    warmup_cycle_hours: float = 4.0
+    warmup_seed_accounts: str = ""  # comma-separated seed emails
+
+    # Nubo Mail Server
+    nubo_smtp_host: str = "mail.nubo.email"
+    nubo_smtp_port: int = 587
+    nubo_imap_host: str = "mail.nubo.email"
+    nubo_imap_port: int = 993
+
+    # CT Log Monitor
+    ctlog_keywords: str = "agency,studio,tech,digital,software,health,finance"
+
+    # Company Registry
+    opencorporates_api_key: str = ""
+    companies_house_api_key: str = ""
+
     # Agency details
     agency_name: str = "Your Agency"
     agency_website: str = "https://your-agency.com"
     agency_phone: str = ""
     agency_address: str = ""
 
+    # Verticals
+    verticals_config: str = ""  # JSON override, otherwise defaults used
+
     @property
     def db_dir(self) -> Path:
         return Path(self.db_path).parent
+
+    @property
+    def warmup_seeds(self) -> list[str]:
+        if not self.warmup_seed_accounts:
+            return []
+        return [s.strip() for s in self.warmup_seed_accounts.split(",") if s.strip()]
+
+    @property
+    def ctlog_keyword_list(self) -> list[str]:
+        return [k.strip() for k in self.ctlog_keywords.split(",") if k.strip()]
+
+    @property
+    def verticals(self) -> dict[str, list[str]]:
+        if self.verticals_config:
+            import json
+            return json.loads(self.verticals_config)
+        return {
+            "hostingduty": ["hosting", "domain", "server", "vps", "cloud", "website", "ssl", "dns"],
+            "chandorkar": ["software", "development", "app", "web", "mobile", "custom", "developer", "freelance"],
+            "nubo": ["email", "mail", "storage", "backup", "smtp", "deliverability"],
+            "vikasit": ["ai", "ml", "model", "llm", "cli", "automation", "machine learning"],
+            "setara": ["document", "blockchain", "verification", "notary", "contract", "legal"],
+            "staff_aug": ["hiring", "developer", "engineer", "team", "augmentation", "recruit", "talent"],
+        }
 
 
 settings = Settings()

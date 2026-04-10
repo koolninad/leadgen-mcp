@@ -646,8 +646,12 @@ async def _process_high_score_domains(
                     "_score_total": domain_data["score"],
                     "signals": score_reasons,
                     "_emails": [email_to],
+                    "_verticals": ["hostingduty", "chandorkar"],
                     "_email_status": "dry_run" if dry_run else "sent",
+                    "_email_to": email_to,
+                    "_email_from": settings.smtp_from_email or settings.smtp_user,
                     "_email_subject": email_result.get("subject", ""),
+                    "_email_body": email_result.get("body", ""),
                 }
                 await send_lead_notification(lead_card, lead_number=i)
                 stats["telegram_sent"] += 1

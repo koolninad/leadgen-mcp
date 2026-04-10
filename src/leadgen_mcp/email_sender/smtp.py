@@ -16,9 +16,26 @@ async def send_email(
     body_html: str,
     tracking_id: str | None = None,
     track: bool = True,
+    from_email: str | None = None,
+    from_name: str | None = None,
+    smtp_host: str | None = None,
+    smtp_port: int | None = None,
+    smtp_user: str | None = None,
+    smtp_password: str | None = None,
 ) -> dict:
-    """Send an email via SMTP with optional tracking."""
-    if not settings.smtp_user or not settings.smtp_password:
+    """Send an email via SMTP with optional tracking.
+
+    If from_email/smtp_* are provided, uses those credentials (sender rotation).
+    Otherwise falls back to settings.smtp_* defaults.
+    """
+    _user = smtp_user or settings.smtp_user
+    _password = smtp_password or settings.smtp_password
+    _host = smtp_host or settings.smtp_host
+    _port = smtp_port or settings.smtp_port
+    _from_email = from_email or settings.smtp_from_email or _user
+    _from_name = from_name or settings.smtp_from_name
+
+    if not _user or not _password:
         return {"error": "SMTP not configured. Set SMTP_USER and SMTP_PASSWORD in .env"}
 
     if not tracking_id:
@@ -30,10 +47,10 @@ async def send_email(
 
     # Build MIME message
     msg = MIMEMultipart("alternative")
-    msg["From"] = f"{settings.smtp_from_name} <{settings.smtp_from_email or settings.smtp_user}>"
+    msg["From"] = f"{_from_name} <{_from_email}>"
     msg["To"] = to_email
     msg["Subject"] = subject
-    msg["Reply-To"] = settings.smtp_from_email or settings.smtp_user
+    msg["Reply-To"] = _from_email
 
     # Plain text version (strip HTML tags for fallback)
     import re
@@ -46,15 +63,16 @@ async def send_email(
     try:
         await aiosmtplib.send(
             msg,
-            hostname=settings.smtp_host,
-            port=settings.smtp_port,
-            username=settings.smtp_user,
-            password=settings.smtp_password,
+            hostname=_host,
+            port=_port,
+            username=_user,
+            password=_password,
             start_tls=True,
         )
         return {
             "success": True,
             "to": to_email,
+            "from": _from_email,
             "subject": subject,
             "tracking_id": tracking_id,
         }
@@ -63,6 +81,7 @@ async def send_email(
             "success": False,
             "error": str(e),
             "to": to_email,
+            "from": _from_email,
         }
 
 

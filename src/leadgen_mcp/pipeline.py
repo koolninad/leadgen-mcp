@@ -57,14 +57,14 @@ ALL_TLDS = [
 ]
 
 from .config import settings
-from .db.repository import (
-    get_db,
+from .db import (
     upsert_lead,
     get_lead,
     query_leads,
     get_contacts,
     save_scan_result,
 )
+from .enrichment.vertical import assign_vertical
 from .platforms.tools import CRAWLERS, _save_leads
 from .scanner.crawler import crawl_url, crawl_batch
 from .scanner.tech_detector import detect_tech_stack
@@ -92,6 +92,10 @@ class PipelineConfig:
     platforms: list[str] = field(
         default_factory=lambda: [
             "hackernews", "reddit", "producthunt", "indiehackers",
+            "google_maps", "github_projects", "quora",
+            "ct_log", "company_registry", "yellowpages",
+            "tech_debt", "broken_sites",
+            "gov_tenders", "private_tenders",
         ]
     )
 
@@ -192,6 +196,46 @@ class PipelineConfig:
                 "action": "no_website",
                 "category": "restaurant",
                 "city": "",
+                "max_results": 20,
+            },
+            "quora": {
+                "keywords": ["need developer", "how to build app", "website cost"],
+                "max_results": 15,
+            },
+            "ct_log": {
+                "keywords": ["agency", "studio", "tech", "digital", "software"],
+                "max_results": 30,
+            },
+            "company_registry": {
+                "source": "opencorporates",
+                "keywords": ["software", "technology", "digital"],
+                "days_back": 14,
+                "max_results": 20,
+            },
+            "yellowpages": {
+                "category": "computer services",
+                "location": "New York, NY",
+                "max_results": 20,
+            },
+            "tech_debt": {
+                "keywords": ["small business website", "local business"],
+                "max_results": 20,
+            },
+            "broken_sites": {
+                "keywords": ["small business website"],
+                "max_results": 20,
+            },
+            "gov_tenders": {
+                "source": "all",
+                "keywords": ["software development", "web application", "IT services",
+                             "cloud migration", "hosting services", "cybersecurity"],
+                "days_back": 14,
+                "max_results": 30,
+            },
+            "private_tenders": {
+                "source": "all",
+                "keywords": ["software development", "web application", "IT services",
+                             "mobile app development", "digital transformation"],
                 "max_results": 20,
             },
         }
@@ -324,7 +368,12 @@ class LeadGenPipeline:
 
     async def _ensure_db(self):
         """Make sure the database is initialized."""
-        await get_db()
+        if settings.database_url:
+            from .db.pg_repository import get_pool
+            await get_pool()
+        else:
+            from .db.repository import get_db
+            await get_db()
 
     async def run_full_cycle(self) -> CycleStats:
         """Run one complete cycle: discover leads, scan, enrich, score, email."""
@@ -603,7 +652,7 @@ class LeadGenPipeline:
                 found_emails = email_results.get("emails_found", [])
                 stats.emails_found += len(found_emails)
 
-                from .db.repository import save_contact
+                from .db import save_contact
                 for email in found_emails:
                     await save_contact(
                         lead_id, email=email,
@@ -663,6 +712,32 @@ class LeadGenPipeline:
                     stats.warm_leads += 1
                 else:
                     stats.cold_leads += 1
+
+                # Assign verticals
+                signals = lead.get("signals", [])
+                if isinstance(signals, str):
+                    try:
+                        signals = json.loads(signals)
+                    except (json.JSONDecodeError, TypeError):
+                        signals = []
+                verticals = assign_vertical(
+                    signals=signals,
+                    description=lead.get("description", ""),
+                    source_platform=lead.get("source_platform", lead.get("source", "")),
+                )
+                lead["_verticals"] = verticals
+
+                # Save verticals to DB if using PG
+                if settings.database_url and verticals:
+                    try:
+                        from .db.pg_repository import get_pool
+                        pool = await get_pool()
+                        await pool.execute(
+                            "UPDATE leads SET vertical_match = $1 WHERE id = $2",
+                            verticals, lead_id,
+                        )
+                    except Exception:
+                        pass
             except Exception as e:
                 logger.error("  Scoring failed for %s: %s", lead_id, e)
 
@@ -709,24 +784,68 @@ class LeadGenPipeline:
 
                 stats.emails_generated += 1
 
+                # Attach email data to lead for Telegram notification
+                lead["_email_to"] = to_email
+                lead["_email_subject"] = email_data.get("subject", "")
+                lead["_email_body"] = email_data.get("body", "")
+
                 if self.config.dry_run:
                     logger.info(
                         "  [DRY RUN] Would send to %s: %s",
                         to_email, email_data.get("subject", "?"),
                     )
+                    lead["_email_status"] = "dry_run"
                 else:
-                    result = await send_single_email(
-                        to_email=to_email,
-                        subject=email_data["subject"],
-                        body=email_data["body"],
-                        lead_id=lead_id,
-                        track=True,
-                    )
+                    # Use sender rotation if PG is available
+                    sender = None
+                    if settings.database_url:
+                        try:
+                            from .email_sender.rotation import pick_sender, record_send
+                            recipient_domain = to_email.split("@")[1] if "@" in to_email else None
+                            vertical = (lead.get("_verticals") or ["chandorkar"])[0]
+                            sender = await pick_sender(
+                                recipient_domain=recipient_domain,
+                                vertical=vertical,
+                            )
+                        except Exception as e:
+                            logger.debug("Sender rotation failed, using default: %s", e)
+
+                    if sender:
+                        lead["_email_from"] = sender["email"]
+                        from .email_sender.smtp import send_email, text_to_html
+                        body_html = text_to_html(email_data["body"])
+                        result = await send_email(
+                            to_email=to_email,
+                            subject=email_data["subject"],
+                            body_html=body_html,
+                            from_email=sender["email"],
+                            from_name=sender["display_name"],
+                            smtp_host=sender["smtp_host"],
+                            smtp_port=sender["smtp_port"],
+                            smtp_user=sender["smtp_user"],
+                            smtp_password=sender["smtp_password"],
+                            track=True,
+                        )
+                        if result.get("success"):
+                            await record_send(sender["id"])
+                    else:
+                        lead["_email_from"] = settings.smtp_from_email or settings.smtp_user
+                        result = await send_single_email(
+                            to_email=to_email,
+                            subject=email_data["subject"],
+                            body=email_data["body"],
+                            lead_id=lead_id,
+                            track=True,
+                        )
+
                     if result.get("success"):
                         stats.emails_sent += 1
-                        logger.info("  Sent email to %s", to_email)
+                        lead["_email_status"] = "sent"
+                        logger.info("  Sent email to %s from %s",
+                                    to_email, sender["email"] if sender else "default")
                     else:
                         stats.emails_failed += 1
+                        lead["_email_status"] = "failed"
                         logger.warning("  Send failed for %s: %s",
                                        to_email, result.get("error"))
 

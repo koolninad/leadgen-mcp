@@ -1,6 +1,7 @@
 """Scheduler for running the pipeline on a configurable interval.
 
-Supports graceful shutdown via SIGINT/SIGTERM and tracks cycle history.
+Supports graceful shutdown via SIGINT/SIGTERM, tracks cycle history,
+and spawns warmup daemon + IMAP poller as background tasks.
 """
 
 import asyncio
@@ -10,7 +11,7 @@ import sys
 from datetime import datetime, timezone
 
 from .pipeline import LeadGenPipeline, PipelineConfig, CycleStats
-from .db.repository import close_db
+from .config import settings
 
 logger = logging.getLogger("leadgen.scheduler")
 
@@ -25,6 +26,7 @@ class PipelineScheduler:
         self._last_stats: CycleStats | None = None
         self._history: list[CycleStats] = []
         self._started_at: str = ""
+        self._background_tasks: list[asyncio.Task] = []
 
     @property
     def cycle_count(self) -> int:
@@ -54,19 +56,51 @@ class PipelineScheduler:
             logger.info("Received signal %s — shutting down gracefully...", sig.name)
             self._running = False
 
-        # On Windows, only SIGINT is supported via add_signal_handler;
-        # SIGTERM and SIGBREAK are handled differently.
         if sys.platform == "win32":
-            # On Windows, SIGINT is handled by default (KeyboardInterrupt),
-            # but we also try to register handlers for clean async shutdown.
             try:
                 loop.add_signal_handler(signal.SIGINT, _handle_stop, signal.SIGINT)
             except NotImplementedError:
-                # Fallback: Python on Windows doesn't always support add_signal_handler
                 signal.signal(signal.SIGINT, lambda s, f: self.stop())
         else:
             for sig in (signal.SIGINT, signal.SIGTERM):
                 loop.add_signal_handler(sig, _handle_stop, sig)
+
+    async def _start_background_services(self):
+        """Start warmup daemon and IMAP poller if PostgreSQL is configured."""
+        if not settings.database_url:
+            logger.info("No DATABASE_URL — skipping warmup and IMAP daemons")
+            return
+
+        # Start warmup daemon
+        if settings.warmup_enabled:
+            try:
+                from .warmup.daemon import WarmupDaemon
+                warmup = WarmupDaemon()
+                task = asyncio.create_task(warmup.run_forever())
+                self._background_tasks.append(task)
+                logger.info("Warmup daemon started (cycle every %.1fh)", settings.warmup_cycle_hours)
+            except Exception as e:
+                logger.warning("Failed to start warmup daemon: %s", e)
+
+        # Start IMAP poller
+        try:
+            from .imap_aggregate.poller import IMAPAggregator
+            imap = IMAPAggregator()
+            task = asyncio.create_task(imap.run_forever())
+            self._background_tasks.append(task)
+            logger.info("IMAP aggregator started (poll every %ds)", settings.imap_poll_interval)
+        except Exception as e:
+            logger.warning("Failed to start IMAP aggregator: %s", e)
+
+    async def _stop_background_services(self):
+        """Stop all background tasks."""
+        for task in self._background_tasks:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        self._background_tasks.clear()
 
     async def run_forever(self):
         """Run pipeline cycles indefinitely until stopped."""
@@ -75,10 +109,11 @@ class PipelineScheduler:
 
         logger.info(
             "Pipeline scheduler started. Cycle interval: %.1f hours. "
-            "Dry run: %s. Platforms: %s",
+            "Dry run: %s. Platforms: %s. DB: %s",
             interval,
             self._pipeline.config.dry_run,
             ", ".join(self._pipeline.config.platforms),
+            "postgresql" if settings.database_url else "sqlite",
         )
 
         try:
@@ -86,6 +121,9 @@ class PipelineScheduler:
         except Exception:
             logger.debug("Could not install signal handlers — "
                          "use Ctrl+C for graceful shutdown")
+
+        # Start background services
+        await self._start_background_services()
 
         while self._running:
             self._cycle_count += 1
@@ -101,7 +139,6 @@ class PipelineScheduler:
                 stats = await self._pipeline.run_full_cycle()
                 self._last_stats = stats
                 self._history.append(stats)
-                # Keep only last 50 cycle stats in memory
                 if len(self._history) > 50:
                     self._history = self._history[-50:]
                 logger.info("=== Cycle %d complete ===", cycle_num)
@@ -113,13 +150,9 @@ class PipelineScheduler:
             if not self._running:
                 break
 
-            # Wait for next cycle, checking every second so we can respond
-            # to shutdown signals promptly
             wait_seconds = interval * 3600
             logger.info(
-                "Next cycle in %.1f hours (at %s). Waiting...",
-                interval,
-                datetime.now(timezone.utc).strftime("%H:%M:%S"),
+                "Next cycle in %.1f hours. Waiting...", interval,
             )
             elapsed = 0.0
             while elapsed < wait_seconds and self._running:
@@ -129,8 +162,17 @@ class PipelineScheduler:
         logger.info(
             "Scheduler stopped after %d cycles. Cleaning up...", self._cycle_count
         )
-        await close_db()
+        await self._stop_background_services()
+        await self._close_db()
         logger.info("Shutdown complete.")
+
+    async def _close_db(self):
+        """Close database connections."""
+        if settings.database_url:
+            from .db.pg_repository import close_db
+        else:
+            from .db.repository import close_db
+        await close_db()
 
     def stop(self):
         """Signal the scheduler to stop after the current cycle."""
@@ -138,10 +180,9 @@ class PipelineScheduler:
 
     async def run_single(self) -> CycleStats:
         """Run a single pipeline cycle and return stats."""
-        from .db.repository import get_db
-        await get_db()
+        await self._pipeline._ensure_db()
         stats = await self._pipeline.run_full_cycle()
         self._last_stats = stats
         self._cycle_count += 1
-        await close_db()
+        await self._close_db()
         return stats
