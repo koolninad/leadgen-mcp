@@ -738,7 +738,10 @@ async def _process_high_score_domains(
                     "_email_body": email_result.get("body", ""),
                 }
                 await send_lead_notification(lead_card, lead_number=i)
+                # Force flush each message immediately
+                await flush_queue()
                 stats["telegram_sent"] += 1
+                logger.info("  Telegram sent for %s", domain)
 
                 await db.execute(
                     """UPDATE nrd_domains
@@ -749,7 +752,7 @@ async def _process_high_score_domains(
                 await db.commit()
 
             except Exception as e:
-                logger.warning("  Telegram notification failed: %s", e)
+                logger.warning("  Telegram notification failed for %s: %s", domain, e)
 
     finally:
         await db.close()
