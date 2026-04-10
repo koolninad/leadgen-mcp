@@ -356,7 +356,8 @@ class TelegramQueue:
                     msg.retries += 1
                     if msg.retries >= msg.max_retries:
                         logger.error("Telegram message dropped after %d retries", msg.max_retries)
-                        self._queue.popleft()
+                        if self._queue:
+                            self._queue.popleft()
                     else:
                         logger.info("Telegram retry %d/%d in %ds", msg.retries, msg.max_retries, retry_after)
                         await asyncio.sleep(retry_after)
