@@ -130,9 +130,10 @@ class IMAPAggregator:
                     is_unsubscribe=classification["is_unsubscribe"],
                 )
 
-                # Forward real replies to Telegram
+                # Forward real replies to Telegram + central inboxes
                 if classification["is_real_reply"] and saved:
                     await _notify_reply(from_addr, account["email"], subject, body, lead_id)
+                    await _forward_to_central(raw_msg, account["email"])
 
                 count += 1
 
@@ -181,6 +182,46 @@ def _imap_fetch_unseen(host: str, port: int, user: str, password: str) -> list[b
     except Exception as e:
         logger.debug("IMAP error for %s: %s", user, e)
         return []
+
+
+CENTRAL_INBOXES = ["ninad.chandorkar@hostingduty.com", "aniket.bapat@hostingduty.com"]
+
+
+async def _forward_to_central(raw_msg: bytes, received_by: str):
+    """Forward raw email to central inboxes via SMTP."""
+    import smtplib
+    from email.mime.text import MIMEText
+
+    try:
+        parsed = email_lib.message_from_bytes(raw_msg)
+        from_addr = email_lib.utils.parseaddr(parsed.get("From", ""))[1]
+        subject = parsed.get("Subject", "No subject")
+        body_text = _extract_body(parsed)
+
+        # Build forwarded message
+        fwd_body = f"--- Forwarded from {received_by} ---\nOriginal sender: {from_addr}\n\n{body_text}"
+        for inbox in CENTRAL_INBOXES:
+            msg = MIMEText(fwd_body, "plain")
+            msg["From"] = received_by
+            msg["To"] = inbox
+            msg["Subject"] = f"[FWD:{received_by.split('@')[1]}] {subject}"
+
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, _smtp_forward, msg)
+
+    except Exception as e:
+        logger.debug("Forward to central failed: %s", e)
+
+
+def _smtp_forward(msg):
+    """Blocking SMTP forward to central inbox."""
+    try:
+        with smtplib.SMTP(settings.nubo_smtp_host, settings.nubo_smtp_port) as server:
+            server.starttls()
+            server.login(settings.smtp_user, settings.smtp_password)
+            server.send_message(msg)
+    except Exception as e:
+        logger.debug("SMTP forward error: %s", e)
 
 
 def _extract_body(msg) -> str:
