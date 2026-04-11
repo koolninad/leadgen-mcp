@@ -194,9 +194,19 @@ class PipelineConfig:
             },
             "google_maps": {
                 "action": "no_website",
-                "category": "restaurant",
-                "city": "",
-                "max_results": 20,
+                "categories": [
+                    "restaurant", "plumber", "dentist", "salon", "lawyer",
+                    "contractor", "auto repair", "cleaning service", "accountant",
+                    "real estate agent", "veterinarian", "gym", "bakery",
+                ],
+                "cities": [
+                    "New York", "Los Angeles", "Chicago", "Houston", "Phoenix",
+                    "San Francisco", "Miami", "Seattle", "Denver", "Austin",
+                    "Pune", "Mumbai", "Bangalore", "Delhi", "Hyderabad",
+                    "London", "Manchester", "Birmingham",
+                    "Dubai", "Singapore",
+                ],
+                "max_results": 30,
             },
             "quora": {
                 "keywords": ["need developer", "how to build app", "website cost"],

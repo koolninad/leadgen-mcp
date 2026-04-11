@@ -28,17 +28,19 @@ class GoogleMapsCrawler(PlatformCrawler):
         return await self._find_local_businesses(query)
 
     async def _find_businesses_without_websites(self, query: dict) -> list[PlatformLead]:
-        """Find local businesses that don't have a website using DuckDuckGo search."""
-        category = query.get("category", "restaurant")
-        city = query.get("city", "")
-        location = query.get("location", city)
-        max_results = query.get("max_results", 20)
+        """Find local businesses that don't have a website using SearXNG/DDG search."""
+        import random
 
-        if not location:
-            location = "United States"
+        categories = query.get("categories", [query.get("category", "restaurant")])
+        cities = query.get("cities", [query.get("city", "")])
+        max_results = query.get("max_results", 30)
+
+        # Pick random category + city combo each run for variety
+        category = random.choice(categories) if isinstance(categories, list) else categories
+        city = random.choice(cities) if isinstance(cities, list) and cities else "United States"
+        location = city
 
         # Strategy: Search for businesses with only social media / directory pages
-        # (businesses without their own website tend to show up on Yelp, Facebook, etc.)
         search_query = (
             f'"{category}" "{location}" '
             f'(site:yelp.com OR site:facebook.com OR site:yellowpages.com) '
