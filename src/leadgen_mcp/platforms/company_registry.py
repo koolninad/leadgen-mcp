@@ -1,17 +1,75 @@
-"""Company Registration Scanner.
+"""New company registration scanner — finds newly incorporated companies globally.
 
-Scans OpenCorporates and UK Companies House for newly incorporated companies.
-New company registration = potential lead needing website/software.
+Strategy: SearXNG searches for company registrations in target countries.
+UK Companies House API when API key is available.
 """
 
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 
 from .base import PlatformCrawler, PlatformLead
 from ..config import settings
 from ..utils.http import create_client
+from ..utils.search import web_search
 
 logger = logging.getLogger("leadgen.platforms.company_registry")
+
+# Country-specific search queries for new company registrations
+COUNTRY_QUERIES = {
+    # Priority 1: India
+    "India": [
+        "newly registered company India software technology 2026",
+        "MCA new company incorporation IT services India 2026",
+        "startup registered India technology digital 2026",
+    ],
+    # Priority 1: USA
+    "USA": [
+        "new business registration USA software technology 2026",
+        "SEC EDGAR new company filing technology startup 2026",
+        "Delaware incorporation technology software startup 2026",
+    ],
+    # Priority 1: UK
+    "UK": [
+        "companies house new incorporation technology software 2026",
+        "UK new company registered IT services digital 2026",
+    ],
+    # Priority 1: UAE
+    "UAE": [
+        "new company registered Dubai technology software 2026",
+        "DMCC new business license IT digital UAE 2026",
+        "Abu Dhabi new company registration technology 2026",
+    ],
+    # Priority 1: Singapore
+    "Singapore": [
+        "ACRA new company registration Singapore technology 2026",
+        "Singapore startup incorporated software IT 2026",
+    ],
+    # Priority 2: Middle East
+    "Saudi Arabia": [
+        "Saudi Arabia new company registration technology IT 2026",
+    ],
+    "Qatar": [
+        "Qatar new company registration technology software 2026",
+    ],
+    # Priority 2: Southeast Asia
+    "Malaysia": [
+        "SSM Malaysia new company registration technology 2026",
+    ],
+    "Philippines": [
+        "SEC Philippines new company registration IT software 2026",
+    ],
+    # Priority 3: Others
+    "Australia": [
+        "ASIC new company registration technology software 2026",
+    ],
+    "Canada": [
+        "Canada new business registration technology startup 2026",
+    ],
+    "Germany": [
+        "Germany new company registration technology GmbH 2026",
+    ],
+}
 
 
 class CompanyRegistryCrawler(PlatformCrawler):
@@ -20,162 +78,117 @@ class CompanyRegistryCrawler(PlatformCrawler):
     max_concurrency = 2
 
     async def crawl(self, query: dict) -> list[PlatformLead]:
-        source = query.get("source", "opencorporates")
-        keywords = query.get("keywords", ["software", "technology", "digital", "app"])
-        days_back = query.get("days_back", 30)
+        keywords = query.get("keywords", ["software", "technology"])
         max_results = query.get("max_results", 30)
+        countries = query.get("countries", list(COUNTRY_QUERIES.keys()))
 
-        if source == "companies_house":
-            return await self._crawl_companies_house(keywords, days_back, max_results)
-
-        results = await self._crawl_opencorporates(keywords, days_back, max_results)
-
-        # Fallback: SearXNG search for newly registered companies
-        if not results:
-            results = await self._search_new_companies(keywords, max_results)
-
-        return results
-
-    async def _crawl_opencorporates(
-        self, keywords: list[str], days_back: int, max_results: int,
-    ) -> list[PlatformLead]:
-        """Search OpenCorporates for recently incorporated companies."""
         leads = []
-        since = (datetime.now(timezone.utc) - timedelta(days=days_back)).strftime("%Y-%m-%d")
 
-        for keyword in keywords[:3]:
-            url = "https://api.opencorporates.com/v0.4/companies/search"
-            params = {
-                "q": keyword,
-                "incorporation_date": f"{since}:",
-                "order": "incorporation_date",
-                "per_page": min(max_results, 30),
-            }
-            if settings.opencorporates_api_key:
-                params["api_token"] = settings.opencorporates_api_key
-
+        # Try UK Companies House API first if key available
+        if settings.companies_house_api_key:
             try:
-                await self._bucket.acquire()
-                async with create_client(timeout=30.0) as client:
-                    resp = await client.get(url, params=params)
-                    if resp.status_code == 403:
-                        logger.warning("OpenCorporates rate limited or needs API key")
-                        break
-                    if resp.status_code != 200:
-                        continue
-
-                    data = resp.json()
-                    companies = data.get("results", {}).get("companies", [])
-
-                    for item in companies:
-                        co = item.get("company", {})
-                        name = co.get("name", "")
-                        jurisdiction = co.get("jurisdiction_code", "")
-                        inc_date = co.get("incorporation_date", "")
-                        oc_url = co.get("opencorporates_url", "")
-
-                        leads.append(PlatformLead(
-                            source="company_registry",
-                            company_name=name[:80],
-                            description=f"Newly incorporated ({inc_date}) in {jurisdiction}. Keyword: {keyword}",
-                            signals=["newly_incorporated", "tech_company"],
-                            raw_url=oc_url,
-                            location=jurisdiction.upper(),
-                        ))
-
+                uk_leads = await self._crawl_companies_house(keywords, 30, max_results // 3)
+                leads.extend(uk_leads)
             except Exception as e:
-                logger.warning("OpenCorporates search failed for '%s': %s", keyword, e)
+                logger.debug("Companies House API failed: %s", e)
 
+        # Search all target countries via SearXNG
+        for country in countries:
             if len(leads) >= max_results:
                 break
 
+            queries = COUNTRY_QUERIES.get(country, [f"new company registration {country} technology software 2026"])
+
+            for search_query in queries[:1]:  # 1 query per country to avoid overload
+                try:
+                    results = await web_search(search_query, max_results=5)
+
+                    for r in results:
+                        title = r.get("title", "")
+                        url = r.get("url", "")
+                        snippet = r.get("snippet", r.get("content", ""))
+
+                        # Skip aggregator/directory pages
+                        if any(skip in url for skip in [
+                            "google.", "facebook.", "wikipedia.", "linkedin.",
+                            "youtube.", "twitter.", "/search", "/category",
+                        ]):
+                            continue
+
+                        # Skip if title is clearly not a company
+                        title_lower = title.lower()
+                        if any(skip in title_lower for skip in [
+                            "definition", "meaning", "how to", "what is",
+                            "template", "format", "sample",
+                        ]):
+                            continue
+
+                        # Extract company name
+                        company = re.sub(
+                            r"\s*[\|–-]\s*(Companies House|MCA|ACRA|DMCC|SEC|LinkedIn|Bloomberg).*$",
+                            "", title
+                        ).strip()[:80]
+
+                        # Extract domain if present
+                        domain = None
+                        domain_match = re.search(r"https?://(?:www\.)?([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})", url)
+                        if domain_match:
+                            d = domain_match.group(1)
+                            if not any(skip in d for skip in ["google.", "facebook.", "linkedin."]):
+                                domain = d
+
+                        signals = ["newly_incorporated"]
+                        if any(kw in f"{title} {snippet}".lower() for kw in ["software", "tech", "digital", "it ", "cloud"]):
+                            signals.append("tech_company")
+
+                        leads.append(PlatformLead(
+                            source="company_registry",
+                            company_name=company,
+                            domain=domain,
+                            description=snippet[:200] if snippet else title,
+                            signals=signals,
+                            raw_url=url,
+                            location=country,
+                        ))
+
+                        if len(leads) >= max_results:
+                            break
+
+                except Exception as e:
+                    logger.debug("Company search failed for %s: %s", country, e)
+
+        logger.info("Company registry: %d leads across %d countries", len(leads), len(countries))
         return leads[:max_results]
 
-    async def _crawl_companies_house(
-        self, keywords: list[str], days_back: int, max_results: int,
-    ) -> list[PlatformLead]:
-        """Search UK Companies House for new incorporations."""
-        if not settings.companies_house_api_key:
-            logger.info("Companies House API key not set, skipping")
-            return []
-
+    async def _crawl_companies_house(self, keywords, days_back, max_results):
+        """UK Companies House API (free, needs API key)."""
         leads = []
         since = (datetime.now(timezone.utc) - timedelta(days=days_back)).strftime("%Y-%m-%d")
 
-        for keyword in keywords[:3]:
-            url = "https://api.company-information.service.gov.uk/advanced-search/companies"
-            params = {
-                "company_name_includes": keyword,
-                "incorporated_from": since,
-                "size": min(max_results, 20),
-            }
-
+        for keyword in keywords[:2]:
             try:
                 await self._bucket.acquire()
                 async with create_client(timeout=30.0) as client:
                     resp = await client.get(
-                        url, params=params,
+                        "https://api.company-information.service.gov.uk/advanced-search/companies",
+                        params={"company_name_includes": keyword, "incorporated_from": since, "size": 10},
                         auth=(settings.companies_house_api_key, ""),
                     )
                     if resp.status_code != 200:
-                        logger.warning("Companies House returned %d", resp.status_code)
                         continue
 
-                    data = resp.json()
-                    for item in data.get("items", []):
+                    for item in resp.json().get("items", []):
                         name = item.get("company_name", "")
                         number = item.get("company_number", "")
-                        inc_date = item.get("date_of_creation", "")
-
                         leads.append(PlatformLead(
                             source="company_registry",
                             company_name=name[:80],
-                            description=f"UK company incorporated {inc_date}. Number: {number}",
+                            description=f"UK company. Number: {number}",
                             signals=["newly_incorporated", "uk_company"],
                             raw_url=f"https://find-and-update.company-information.service.gov.uk/company/{number}",
                             location="UK",
                         ))
-
             except Exception as e:
-                logger.warning("Companies House failed: %s", e)
+                logger.debug("Companies House failed: %s", e)
 
-            if len(leads) >= max_results:
-                break
-
-        return leads[:max_results]
-
-    async def _search_new_companies(self, keywords: list[str], max_results: int) -> list[PlatformLead]:
-        """Fallback: search for newly registered companies via SearXNG."""
-        from ..utils.search import web_search
-        import re
-
-        leads = []
-        queries = [f"newly registered company {kw} 2026" for kw in keywords[:2]] + [
-            "new startup incorporated software technology 2026",
-        ]
-
-        for query in queries[:3]:
-            try:
-                results = await web_search(query, max_results=max_results // 3)
-                for r in results:
-                    title = r.get("title", "")
-                    url = r.get("url", "")
-                    snippet = r.get("snippet", r.get("content", ""))
-                    if any(skip in url for skip in ["google.", "facebook.", "wikipedia."]):
-                        continue
-
-                    company = re.sub(r"\s*[\|–-]\s*(Crunchbase|LinkedIn|Bloomberg).*$", "", title).strip()
-                    leads.append(PlatformLead(
-                        source="company_registry",
-                        company_name=company[:80],
-                        description=snippet[:200] if snippet else title,
-                        signals=["newly_incorporated", "tech_company"],
-                        raw_url=url,
-                    ))
-                    if len(leads) >= max_results:
-                        break
-            except Exception:
-                pass
-
-        logger.info("Company registry (search fallback): %d leads", len(leads))
         return leads[:max_results]
