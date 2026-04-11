@@ -1,8 +1,22 @@
-"""Async Ollama client via OpenAI-compatible endpoint."""
+"""Async Ollama client via OpenAI-compatible endpoint.
+
+Uses a global semaphore to limit concurrent Ollama calls.
+Max 2 concurrent calls to prevent server overload.
+"""
+
+import asyncio
+import logging
 
 import httpx
 
 from ..config import settings
+
+logger = logging.getLogger("leadgen.ai.ollama")
+
+# Global semaphore — max 2 concurrent Ollama calls across entire application
+# This prevents NRD + Tender + Daemon from overloading the server
+_ollama_semaphore = asyncio.Semaphore(2)
+_queue_depth = 0
 
 
 async def generate(
@@ -11,25 +25,43 @@ async def generate(
     temperature: float = 0.7,
     max_tokens: int = 1024,
 ) -> str:
-    """Generate text using Ollama's OpenAI-compatible API."""
-    messages = []
-    if system_prompt:
-        messages.append({"role": "system", "content": system_prompt})
-    messages.append({"role": "user", "content": prompt})
+    """Generate text using Ollama's OpenAI-compatible API.
 
-    async with httpx.AsyncClient(timeout=300.0) as client:
-        resp = await client.post(
-            f"{settings.ollama_base_url}/v1/chat/completions",
-            json={
-                "model": settings.ollama_model,
-                "messages": messages,
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-            },
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return data["choices"][0]["message"]["content"]
+    Rate-limited to max 2 concurrent calls globally.
+    """
+    global _queue_depth
+    _queue_depth += 1
+
+    if _queue_depth > 2:
+        logger.debug("Ollama queue depth: %d (waiting for slot)", _queue_depth)
+
+    async with _ollama_semaphore:
+        _queue_depth -= 1
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        try:
+            async with httpx.AsyncClient(timeout=600.0) as client:
+                resp = await client.post(
+                    f"{settings.ollama_base_url}/v1/chat/completions",
+                    json={
+                        "model": settings.ollama_model,
+                        "messages": messages,
+                        "temperature": temperature,
+                        "max_tokens": max_tokens,
+                    },
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                return data["choices"][0]["message"]["content"]
+        except httpx.ReadTimeout:
+            logger.warning("Ollama timeout (600s) — model may be overloaded")
+            raise
+        except Exception as e:
+            logger.error("Ollama error: %s", e)
+            raise
 
 
 async def check_health() -> dict:
