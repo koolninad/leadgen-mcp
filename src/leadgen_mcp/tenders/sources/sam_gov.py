@@ -10,11 +10,7 @@ from ...config import settings
 
 logger = logging.getLogger("tenders.sam_gov")
 
-# Try both endpoints — one of them works depending on API key type
-API_BASES = [
-    "https://api.sam.gov/prod/opportunities/v2/search",
-    "https://api.sam.gov/opportunities/v2/search",
-]
+API_BASE = "https://api.sam.gov/prod/opportunities/v2/search"
 IT_NAICS = ["541511", "541512", "541513", "541519", "518210", "519130", "511210"]
 KEYWORDS = [
     "software development", "web application", "cloud computing",
@@ -30,16 +26,15 @@ async def crawl(days_back: int = 14, max_results: int = 30) -> list[Tender]:
     posted_to = datetime.now(timezone.utc).strftime("%m/%d/%Y")
 
     for keyword in KEYWORDS[:5]:
-        for api_base in API_BASES:
-            try:
-                async with httpx.AsyncClient(timeout=30) as client:
-                    resp = await client.get(api_base, params={
-                        "api_key": settings.sam_gov_api_key,
-                        "postedFrom": posted_from,
-                        "postedTo": posted_to,
-                        "keyword": keyword,
-                        "limit": min(max_results, 25),
-                    })
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.get(API_BASE, params={
+                    "api_key": settings.sam_gov_api_key,
+                    "postedFrom": posted_from,
+                    "postedTo": posted_to,
+                    "keyword": keyword,
+                    "limit": min(max_results, 25),
+                })
                     if resp.status_code != 200:
                         continue
 
@@ -77,11 +72,8 @@ async def crawl(days_back: int = 14, max_results: int = 30) -> list[Tender]:
                             raw_data=opp,
                         ))
 
-                    if tenders:
-                        break  # This endpoint worked, skip the other
-
-            except Exception as e:
-                logger.warning("SAM.gov %s failed for '%s': %s", api_base.split("/")[3], keyword, e)
+        except Exception as e:
+            logger.warning("SAM.gov failed for '%s': %s", keyword, e)
 
         if len(tenders) >= max_results:
             break

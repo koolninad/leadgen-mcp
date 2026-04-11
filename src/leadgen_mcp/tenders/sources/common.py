@@ -52,8 +52,14 @@ def is_it_tender(text: str) -> bool:
 async def search_tenders_via_searxng(query: str, max_results: int = 10) -> list[dict]:
     """Search for tenders using SearXNG as fallback when APIs/scraping fail."""
     try:
-        from ...utils.search import search_web
-        results = await search_web(query, max_results=max_results)
+        from ...utils.search import web_search
+        results = await web_search(query, max_results=max_results)
+        # Normalize field names (search returns 'snippet', tender code expects 'content')
+        for r in results:
+            if "snippet" in r and "content" not in r:
+                r["content"] = r["snippet"]
         return results
-    except Exception:
+    except Exception as e:
+        import logging
+        logging.getLogger("tenders.common").debug("SearXNG search failed: %s", e)
         return []
