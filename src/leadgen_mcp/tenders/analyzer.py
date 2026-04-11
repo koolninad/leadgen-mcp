@@ -38,6 +38,52 @@ async def _ask_gemma(prompt: str, system: str = "", temperature: float = 0.4, ma
         return ""
 
 
+def _parse_tender_value(amount_str: str, default_currency: str = "INR") -> float | None:
+    """Parse tender amount string to numeric value.
+
+    Handles: 'GBP 500,000', 'INR 2,50,00,000', '$50000', '5 Lakh', '2.5 Cr', 'EUR 1,000,000'
+    Returns value in the currency's base unit, or None if unparseable.
+    """
+    if not amount_str:
+        return None
+
+    import re
+    text = amount_str.strip().upper()
+
+    # Remove currency symbols/codes
+    text = re.sub(r'(INR|USD|GBP|EUR|SGD|AUD|CAD|\$|£|€|₹)\s*', '', text)
+
+    # Handle Indian notation: Cr (crore), Lakh/Lac
+    cr_match = re.search(r'([\d,.]+)\s*(?:CR|CRORE)', text)
+    if cr_match:
+        num = float(cr_match.group(1).replace(',', ''))
+        return num * 10000000  # 1 Cr = 10M
+
+    lakh_match = re.search(r'([\d,.]+)\s*(?:LAKH|LAC|L)', text)
+    if lakh_match:
+        num = float(lakh_match.group(1).replace(',', ''))
+        return num * 100000  # 1 Lakh = 100K
+
+    # Handle K/M notation
+    k_match = re.search(r'([\d,.]+)\s*K\b', text)
+    if k_match:
+        return float(k_match.group(1).replace(',', '')) * 1000
+
+    m_match = re.search(r'([\d,.]+)\s*M\b', text)
+    if m_match:
+        return float(m_match.group(1).replace(',', '')) * 1000000
+
+    # Plain number with commas
+    num_match = re.search(r'([\d,]+(?:\.\d+)?)', text)
+    if num_match:
+        try:
+            return float(num_match.group(1).replace(',', ''))
+        except ValueError:
+            pass
+
+    return None
+
+
 async def research_organization(tender: Tender) -> dict:
     """Research the tendering organization via web search."""
     org_info = {"about": "", "recent_projects": "", "tech_context": ""}
@@ -204,12 +250,37 @@ Be technically specific. Mention actual technologies and tools.""",
         max_tokens=1500,
     )
 
-    # Step 6: Cost estimation
+    # Step 6: Smart cost estimation — based on tender value if available
     project_type = analysis.get("project_type", "general_it")
     duration = analysis.get("duration_months", 4)
     region_map = {"ct_india": "india", "ct_us": "us", "logic_lane_sg": "singapore"}
     region = region_map.get(company_key, "india")
     cost_estimate = estimate_cost(project_type, region, duration)
+
+    # If tender has a stated value, price competitively below it (85-92%)
+    tender_value = _parse_tender_value(tender.amount, cost_estimate.get("currency", "INR"))
+    if tender_value and tender_value > 0:
+        our_cost = cost_estimate["total"]
+        if our_cost > tender_value:
+            # Our rate-card cost exceeds tender budget — scale down to 88% of tender value
+            scale_factor = (tender_value * 0.88) / our_cost
+            cost_estimate["total"] = round(tender_value * 0.88)
+            cost_estimate["subtotal"] = round(cost_estimate["subtotal"] * scale_factor)
+            cost_estimate["overhead"] = round(cost_estimate["overhead"] * scale_factor)
+            cost_estimate["profit"] = cost_estimate["total"] - cost_estimate["subtotal"] - cost_estimate["overhead"]
+            for item in cost_estimate["breakdown"]:
+                item["subtotal"] = round(item["subtotal"] * scale_factor)
+                item["monthly_rate"] = round(item["monthly_rate"] * scale_factor)
+            logger.info("  Cost adjusted: rate-card %s > tender %s, scaled to 88%% of tender value",
+                        f"{our_cost:,.0f}", f"{tender_value:,.0f}")
+        elif our_cost < tender_value * 0.5:
+            # Our cost is way below tender budget — price at 85% of tender (maximize margin)
+            scale_factor = (tender_value * 0.85) / our_cost
+            cost_estimate["total"] = round(tender_value * 0.85)
+            cost_estimate["profit"] = cost_estimate["total"] - cost_estimate["subtotal"] - cost_estimate["overhead"]
+            logger.info("  Cost adjusted: rate-card %s << tender %s, priced at 85%% of tender",
+                        f"{our_cost:,.0f}", f"{tender_value:,.0f}")
+        # else: our cost is reasonable relative to tender value — use as-is
 
     # Fill tender object
     tender.technology = analysis.get("technology", "General IT")
