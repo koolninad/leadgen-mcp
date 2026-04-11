@@ -25,9 +25,13 @@ async def crawl_all_sources(max_per_source: int = 15) -> list[Tender]:
     all_tenders = []
 
     sources = [
-        ("SAM.gov", _crawl_sam_gov, max_per_source),
+        # Priority 1: Must work
         ("UK Contracts", _crawl_uk, max_per_source),
-        ("India (CPPP+GeM)", _crawl_india, max_per_source),
+        ("India (CPPP+GeM+States)", _crawl_india, max_per_source),
+        ("Middle East (UAE+Saudi+Oman+Bahrain)", _crawl_middle_east, max_per_source),
+        ("Southeast Asia (SG+Philippines)", _crawl_southeast_asia, max_per_source),
+        ("SAM.gov (USA)", _crawl_sam_gov, max_per_source),
+        # Priority 2: Nice to have
         ("EU TED", _crawl_eu, max_per_source),
         ("Multilateral (WB+UNGM)", _crawl_multilateral, max_per_source),
     ]
@@ -71,6 +75,16 @@ async def _crawl_india(max_results):
 
 async def _crawl_eu(max_results):
     from .sources.eu_ted import crawl
+    return await crawl(max_results=max_results)
+
+
+async def _crawl_middle_east(max_results):
+    from .sources.middle_east import crawl
+    return await crawl(max_results=max_results)
+
+
+async def _crawl_southeast_asia(max_results):
+    from .sources.southeast_asia import crawl
     return await crawl(max_results=max_results)
 
 

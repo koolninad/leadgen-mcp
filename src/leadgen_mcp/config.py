@@ -90,6 +90,9 @@ class Settings(BaseSettings):
     opencorporates_api_key: str = ""
     companies_house_api_key: str = ""
 
+    # SAM.gov
+    sam_gov_api_key: str = "DEMO_KEY"
+
     # Agency details
     agency_name: str = "Your Agency"
     agency_website: str = "https://your-agency.com"

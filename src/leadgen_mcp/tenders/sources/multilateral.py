@@ -29,7 +29,15 @@ async def crawl_world_bank(max_results: int = 15) -> list[Tender]:
 
             if resp.status_code == 200:
                 data = resp.json()
-                notices = data.get("procnotices", {})
+                raw_notices = data.get("procnotices", {})
+
+                # Handle both dict and list formats
+                if isinstance(raw_notices, list):
+                    notices = {str(i): n for i, n in enumerate(raw_notices) if isinstance(n, dict)}
+                elif isinstance(raw_notices, dict):
+                    notices = raw_notices
+                else:
+                    notices = {}
 
                 for key, notice in notices.items():
                     if not isinstance(notice, dict):

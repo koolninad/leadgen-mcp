@@ -140,8 +140,67 @@ async def crawl_gem(max_results: int = 20) -> list[Tender]:
     return tenders[:max_results]
 
 
-async def crawl(max_results: int = 30) -> list[Tender]:
+async def crawl_state_portals(max_results: int = 15) -> list[Tender]:
+    """Crawl Indian state eProcurement portals (NIC-based)."""
+    tenders = []
+
+    # NIC-based state portals share the same structure
+    state_portals = [
+        ("Tamil Nadu", "https://tntenders.gov.in/nicgep/app"),
+        ("Maharashtra", "https://mahatenders.gov.in/nicgep/app"),
+        ("Andhra Pradesh", "https://tender.apeprocurement.gov.in/"),
+        ("Telangana", "https://tender.telangana.gov.in/"),
+        ("Uttar Pradesh", "https://etender.up.nic.in/nicgep/app"),
+    ]
+
+    for state_name, portal_url in state_portals:
+        try:
+            async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+                resp = await client.get(
+                    portal_url,
+                    params={"page": "FrontEndLatestActiveTenders", "service": "page"} if "nicgep" in portal_url else {},
+                    headers={"User-Agent": "Mozilla/5.0"},
+                )
+                if resp.status_code != 200:
+                    continue
+
+                soup = BeautifulSoup(resp.text, "lxml")
+                for row in soup.select("table tr")[1:]:
+                    cells = row.select("td")
+                    if len(cells) < 3:
+                        continue
+
+                    title = cells[1].get_text(strip=True)[:200] if len(cells) > 1 else ""
+                    org = cells[2].get_text(strip=True) if len(cells) > 2 else state_name
+                    deadline = cells[3].get_text(strip=True) if len(cells) > 3 else ""
+
+                    combined = f"{title} {org}".lower()
+                    if not any(kw in combined for kw in IT_KEYWORDS):
+                        continue
+
+                    tenders.append(Tender(
+                        title=title, organization=org,
+                        country="India", source=f"india_{state_name.lower().replace(' ', '_')}",
+                        source_url=portal_url, deadline=deadline,
+                        currency="INR", category="IT Services",
+                    ))
+
+                    if len(tenders) >= max_results:
+                        break
+
+        except Exception as e:
+            logger.debug("State portal %s failed: %s", state_name, e)
+
+        if len(tenders) >= max_results:
+            break
+
+    logger.info("India state portals: found %d IT tenders", len(tenders))
+    return tenders[:max_results]
+
+
+async def crawl(max_results: int = 40) -> list[Tender]:
     """Crawl all Indian tender sources."""
-    cppp = await crawl_cppp(max_results // 2)
-    gem = await crawl_gem(max_results // 2)
-    return (cppp + gem)[:max_results]
+    cppp = await crawl_cppp(max_results // 3)
+    gem = await crawl_gem(max_results // 3)
+    states = await crawl_state_portals(max_results // 3)
+    return (cppp + gem + states)[:max_results]
