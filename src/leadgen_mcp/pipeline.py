@@ -94,7 +94,7 @@ class PipelineConfig:
             "hackernews", "reddit", "producthunt", "indiehackers",
             "google_maps", "github_projects", "quora",
             "ct_log", "company_registry", "yellowpages",
-            "tech_debt", "broken_sites",
+            "tech_debt", "broken_sites", "accessibility_scanner",
             "gov_tenders", "private_tenders",
         ]
     )
@@ -218,12 +218,32 @@ class PipelineConfig:
                 "max_results": 20,
             },
             "tech_debt": {
-                "keywords": ["small business website", "local business"],
+                "keywords": [
+                    "restaurant website .com",
+                    "law firm website contact",
+                    "dental clinic website",
+                    "plumber website services",
+                    "construction company website",
+                ],
                 "max_results": 20,
             },
             "broken_sites": {
-                "keywords": ["small business website"],
+                "keywords": [
+                    "local business website contact us",
+                    "small shop website online",
+                    "clinic website book appointment",
+                    "agency website portfolio",
+                ],
                 "max_results": 20,
+            },
+            "accessibility_scanner": {
+                "keywords": [
+                    "law firm website USA",
+                    "medical practice website",
+                    "government website .gov",
+                    "university website admissions",
+                ],
+                "max_results": 15,
             },
             "gov_tenders": {
                 "source": "all",

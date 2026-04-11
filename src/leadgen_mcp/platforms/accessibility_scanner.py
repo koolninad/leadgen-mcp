@@ -155,14 +155,24 @@ class AccessibilityScannerCrawler(PlatformCrawler):
 
     async def _find_urls_to_scan(self, keywords: list[str], max_results: int) -> list[str]:
         """Search for URLs to scan using SearXNG."""
-        from ..utils.search import search_web
+        from ..utils.search import web_search
         urls = []
-        for kw in keywords[:3]:
+        scan_queries = [f"{kw} website" for kw in keywords] if keywords else [
+            "law firm website USA",
+            "medical practice website",
+            "restaurant website online order",
+            "real estate website listings",
+            "small business website services",
+        ]
+        for kw in scan_queries[:4]:
             try:
-                results = await search_web(f"{kw} website", max_results=max_results // len(keywords))
+                results = await web_search(kw, max_results=max_results // max(len(scan_queries[:4]), 1))
                 for r in results:
                     url = r.get("url", "")
-                    if url.startswith("http"):
+                    if url.startswith("http") and not any(skip in url for skip in [
+                        "google.", "facebook.", "yelp.", "wikipedia.", "linkedin.",
+                        "twitter.", "instagram.", "youtube.", "amazon.", "reddit.",
+                    ]):
                         urls.append(url)
             except Exception:
                 pass

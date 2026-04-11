@@ -164,14 +164,31 @@ class TechDebtCrawler(PlatformCrawler):
         return issues
 
     async def _find_urls(self, keywords: list[str], max_results: int) -> list[str]:
-        from ..utils.search import search_web
+        from ..utils.search import web_search
         urls = []
-        for kw in keywords[:3]:
+        # Better queries that find actual business websites
+        scan_queries = keywords if keywords != ["small business website"] else [
+            "restaurant website .com",
+            "law firm website contact",
+            "dental clinic website book appointment",
+            "real estate agency website listings",
+            "plumber website near me",
+            "salon website book online",
+            "accounting firm website services",
+            "construction company website projects",
+            "auto repair shop website",
+            "hotel website book room",
+        ]
+        for kw in scan_queries[:5]:
             try:
-                results = await search_web(kw, max_results=max_results // max(len(keywords), 1))
+                results = await web_search(kw, max_results=max_results // max(len(scan_queries[:5]), 1))
                 for r in results:
                     url = r.get("url", "")
-                    if url.startswith("http"):
+                    if url.startswith("http") and not any(skip in url for skip in [
+                        "google.", "facebook.", "yelp.", "yellowpages.", "wikipedia.",
+                        "linkedin.", "twitter.", "instagram.", "youtube.", "amazon.",
+                        "apple.", "microsoft.", "reddit.", "pinterest.",
+                    ]):
                         urls.append(url)
             except Exception:
                 pass
