@@ -30,55 +30,57 @@ async def crawl(days_back: int = 14, max_results: int = 30) -> list[Tender]:
 
     for keyword in KEYWORDS[:5]:
         for api_base in API_BASES:
-          try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                resp = await client.get(api_base, params={
-                    "api_key": settings.sam_gov_api_key,
-                    "postedFrom": posted_from,
-                    "keyword": keyword,
-                    "ptype": "o",
-                    "limit": min(max_results, 25),
-                })
-                if resp.status_code != 200:
-                    continue
+            try:
+                async with httpx.AsyncClient(timeout=30) as client:
+                    resp = await client.get(api_base, params={
+                        "api_key": settings.sam_gov_api_key,
+                        "postedFrom": posted_from,
+                        "keyword": keyword,
+                        "ptype": "o",
+                        "limit": min(max_results, 25),
+                    })
+                    if resp.status_code != 200:
+                        continue
 
-                data = resp.json()
-                for opp in data.get("opportunitiesData", []):
-                    title = opp.get("title", "")
-                    dept = opp.get("fullParentPathName", "")
-                    sol_num = opp.get("solicitationNumber", "")
-                    deadline = opp.get("responseDeadLine", "")
-                    posted = opp.get("postedDate", "")
-                    ui_link = opp.get("uiLink", f"https://sam.gov/opp/{opp.get('noticeId', '')}/view")
-                    naics = opp.get("naicsCode", "")
-                    set_aside = opp.get("typeOfSetAside", "")
-                    desc = opp.get("description", "")
+                    data = resp.json()
+                    for opp in data.get("opportunitiesData", []):
+                        title = opp.get("title", "")
+                        dept = opp.get("fullParentPathName", "")
+                        sol_num = opp.get("solicitationNumber", "")
+                        deadline = opp.get("responseDeadLine", "")
+                        posted = opp.get("postedDate", "")
+                        ui_link = opp.get("uiLink", f"https://sam.gov/opp/{opp.get('noticeId', '')}/view")
+                        naics = opp.get("naicsCode", "")
+                        set_aside = opp.get("typeOfSetAside", "")
+                        desc = opp.get("description", "")
 
-                    # Extract contact
-                    contact = opp.get("pointOfContact", [{}])
-                    contact_name = contact[0].get("fullName", "") if contact else ""
-                    contact_email = contact[0].get("email", "") if contact else ""
-                    contact_phone = contact[0].get("phone", "") if contact else ""
+                        contact = opp.get("pointOfContact", [{}])
+                        contact_name = contact[0].get("fullName", "") if contact else ""
+                        contact_email = contact[0].get("email", "") if contact else ""
+                        contact_phone = contact[0].get("phone", "") if contact else ""
 
-                    tenders.append(Tender(
-                        title=title[:200],
-                        organization=dept,
-                        country="USA",
-                        source="sam_gov",
-                        source_url=ui_link,
-                        description=desc[:500] if desc else f"NAICS: {naics}. {set_aside}",
-                        reference_number=sol_num,
-                        deadline=deadline,
-                        published_date=posted,
-                        category="IT Services",
-                        contact_name=contact_name,
-                        contact_email=contact_email,
-                        contact_phone=contact_phone,
-                        raw_data=opp,
-                    ))
+                        tenders.append(Tender(
+                            title=title[:200],
+                            organization=dept,
+                            country="USA",
+                            source="sam_gov",
+                            source_url=ui_link,
+                            description=desc[:500] if desc else f"NAICS: {naics}. {set_aside}",
+                            reference_number=sol_num,
+                            deadline=deadline,
+                            published_date=posted,
+                            category="IT Services",
+                            contact_name=contact_name,
+                            contact_email=contact_email,
+                            contact_phone=contact_phone,
+                            raw_data=opp,
+                        ))
 
-        except Exception as e:
-            logger.warning("SAM.gov search failed for '%s': %s", keyword, e)
+                    if tenders:
+                        break  # This endpoint worked, skip the other
+
+            except Exception as e:
+                logger.warning("SAM.gov %s failed for '%s': %s", api_base.split("/")[3], keyword, e)
 
         if len(tenders) >= max_results:
             break
