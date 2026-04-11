@@ -33,13 +33,16 @@ async def crawl(days_back: int = 14, max_results: int = 30) -> list[Tender]:
     for keyword in KEYWORDS[:6]:
         try:
             async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+                # Request active opportunities, sort by response date
+                tomorrow = (datetime.now(timezone.utc) + timedelta(days=1)).strftime("%m/%d/%Y")
                 resp = await client.get(API_BASE, params={
                     "index": "opp",
                     "q": keyword,
                     "page": 0,
-                    "size": min(max_results, 25),
+                    "size": min(max_results * 2, 50),  # fetch extra, filter later
                     "mode": "search",
                     "is_active": "true",
+                    "sort": "-responseDate",  # newest deadlines first
                 }, headers={
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                     "Accept": "application/hal+json",
@@ -68,6 +71,12 @@ async def crawl(days_back: int = 14, max_results: int = 30) -> list[Tender]:
                     deadline = opp.get("responseDate", "")
                     if deadline and "T" in deadline:
                         deadline = deadline[:10]
+
+                    # Skip expired tenders
+                    if deadline:
+                        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                        if deadline < today:
+                            continue
 
                     published = opp.get("publishDate", "")
                     if published and "T" in published:
