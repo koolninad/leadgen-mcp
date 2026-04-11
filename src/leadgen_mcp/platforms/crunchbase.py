@@ -53,13 +53,19 @@ class CrunchbaseCrawler(PlatformCrawler):
         search_query = " ".join(parts)
         results = await web_search(search_query, max_results=max_results)
 
+        # Fallback: broader search without site: restriction
+        if not results:
+            fallback_query = f"startup funded {stage or 'seed'} {industry or 'software'} 2026 raised"
+            results = await web_search(fallback_query, max_results=max_results)
+
         leads = []
         for r in results:
             url = r["url"]
             title = r["title"]
             snippet = r["snippet"]
 
-            if "crunchbase.com" not in url:
+            # Accept results from crunchbase OR general funding news
+            if any(skip in url for skip in ["google.", "facebook.", "twitter.", "linkedin."]):
                 continue
 
             combined_text = f"{title} {snippet}"

@@ -306,7 +306,20 @@ BODY:
         if not subject:
             subject = f"Your new domain {domain} — need a website?"
         if not body:
-            return {"error": "AI generated empty body"}
+            # Fallback template when AI returns empty
+            name_hint = registrant_name or "there"
+            company_hint = registrant_org or domain.rsplit(".", 1)[0]
+            body = (
+                f"Hi {name_hint},\n\n"
+                f"I noticed you recently registered {domain} — congratulations on the new venture!\n\n"
+                f"If you're looking for help building a website or web application for {company_hint}, "
+                f"we'd love to chat. We specialize in custom software development, cloud hosting, "
+                f"and digital transformation.\n\n"
+                f"Would you be open to a quick 10-minute call this week?\n\n"
+                f"Best regards,\n"
+                f"Chandorkar Technologies\n"
+                f"https://chandorkartechnologies.com"
+            )
 
         return {"subject": subject, "body": body}
 

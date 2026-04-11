@@ -27,7 +27,14 @@ class CompanyRegistryCrawler(PlatformCrawler):
 
         if source == "companies_house":
             return await self._crawl_companies_house(keywords, days_back, max_results)
-        return await self._crawl_opencorporates(keywords, days_back, max_results)
+
+        results = await self._crawl_opencorporates(keywords, days_back, max_results)
+
+        # Fallback: SearXNG search for newly registered companies
+        if not results:
+            results = await self._search_new_companies(keywords, max_results)
+
+        return results
 
     async def _crawl_opencorporates(
         self, keywords: list[str], days_back: int, max_results: int,
@@ -135,4 +142,40 @@ class CompanyRegistryCrawler(PlatformCrawler):
             if len(leads) >= max_results:
                 break
 
+        return leads[:max_results]
+
+    async def _search_new_companies(self, keywords: list[str], max_results: int) -> list[PlatformLead]:
+        """Fallback: search for newly registered companies via SearXNG."""
+        from ..utils.search import web_search
+        import re
+
+        leads = []
+        queries = [f"newly registered company {kw} 2026" for kw in keywords[:2]] + [
+            "new startup incorporated software technology 2026",
+        ]
+
+        for query in queries[:3]:
+            try:
+                results = await web_search(query, max_results=max_results // 3)
+                for r in results:
+                    title = r.get("title", "")
+                    url = r.get("url", "")
+                    snippet = r.get("snippet", r.get("content", ""))
+                    if any(skip in url for skip in ["google.", "facebook.", "wikipedia."]):
+                        continue
+
+                    company = re.sub(r"\s*[\|–-]\s*(Crunchbase|LinkedIn|Bloomberg).*$", "", title).strip()
+                    leads.append(PlatformLead(
+                        source="company_registry",
+                        company_name=company[:80],
+                        description=snippet[:200] if snippet else title,
+                        signals=["newly_incorporated", "tech_company"],
+                        raw_url=url,
+                    ))
+                    if len(leads) >= max_results:
+                        break
+            except Exception:
+                pass
+
+        logger.info("Company registry (search fallback): %d leads", len(leads))
         return leads[:max_results]

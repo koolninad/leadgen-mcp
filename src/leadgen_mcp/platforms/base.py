@@ -98,12 +98,73 @@ class PlatformCrawler(ABC):
         ...
 
     async def safe_crawl(self, query: dict) -> list[PlatformLead]:
-        """Crawl with error handling."""
+        """Crawl with error handling + SearXNG fallback for blocked sites."""
         try:
-            return await self.crawl(query)
-        except Exception as e:
-            return [PlatformLead(
+            results = await self.crawl(query)
+            if results:
+                return results
+        except Exception:
+            pass
+
+        # Fallback: search via SearXNG for this platform's leads
+        try:
+            return await self._searxng_fallback(query)
+        except Exception:
+            return []
+
+    async def _searxng_fallback(self, query: dict) -> list[PlatformLead]:
+        """Generic SearXNG fallback when direct crawling fails."""
+        import re
+        from ..utils.search import web_search
+
+        keywords = query.get("keywords", ["software developer"])
+        max_results = query.get("max_results", 10)
+
+        # Platform-specific search queries
+        platform_queries = {
+            "upwork": "site:upwork.com software development project",
+            "clutch": "site:clutch.co software development company",
+            "producthunt": "site:producthunt.com new product launch 2026",
+            "yellowpages": "yellowpages.com software services business",
+            "private_tenders": "tender software development IT services 2026",
+        }
+
+        search_query = platform_queries.get(
+            self.platform_name,
+            f"{self.platform_name} {' '.join(keywords[:2])}"
+        )
+
+        results = await web_search(search_query, max_results=max_results)
+        leads = []
+
+        for r in results:
+            title = r.get("title", "")
+            url = r.get("url", "")
+            snippet = r.get("snippet", r.get("content", ""))
+
+            if not title or any(skip in url for skip in ["google.", "facebook.", "wikipedia."]):
+                continue
+
+            # Extract domain
+            domain = None
+            domain_match = re.search(r"https?://(?:www\.)?([^/]+)", url)
+            if domain_match:
+                d = domain_match.group(1)
+                if self.platform_name not in d and "upwork" not in d and "clutch" not in d:
+                    domain = d
+
+            company = re.sub(r"\s*[\|–-]\s*(Upwork|Clutch|Product Hunt|Yellow Pages).*$", "", title).strip()
+
+            leads.append(PlatformLead(
                 source=self.platform_name,
-                company_name="ERROR",
-                description=f"Crawl failed: {str(e)}",
-            )]
+                company_name=company[:80],
+                domain=domain,
+                description=snippet[:200] if snippet else title,
+                raw_url=url,
+                signals=[f"{self.platform_name}_search"],
+            ))
+
+            if len(leads) >= max_results:
+                break
+
+        return leads
