@@ -43,12 +43,13 @@ async def crawl_world_bank(max_results: int = 15) -> list[Tender]:
                     if not isinstance(notice, dict):
                         continue
 
-                    title = notice.get("notice_text", notice.get("project_name", ""))[:200]
-                    country = notice.get("countryshortname", "")
-                    deadline = notice.get("deadline_date", "")
-                    pub_date = notice.get("notice_posting_date", "")
+                    # Use actual WB API field names
+                    title = notice.get("bid_description", notice.get("notice_text", notice.get("project_name", "")))[:200]
+                    country = notice.get("project_ctry_name", notice.get("countryshortname", ""))
+                    deadline = notice.get("submission_date", notice.get("deadline_date", ""))
+                    pub_date = notice.get("noticedate", notice.get("notice_posting_date", ""))
                     notice_url = notice.get("url", "")
-                    borrower = notice.get("borrower", "")
+                    borrower = notice.get("project_name", notice.get("borrower", ""))
 
                     tenders.append(Tender(
                         title=title,

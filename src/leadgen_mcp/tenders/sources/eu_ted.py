@@ -1,115 +1,105 @@
-"""EU TED (Tenders Electronic Daily) — XML/JSON feeds."""
+"""EU TED — Tenders Electronic Daily. API v3 is dead, use SearXNG + HTML scrape."""
 
 import logging
-from datetime import datetime, timedelta, timezone
+import re
 
 import httpx
+from bs4 import BeautifulSoup
 
 from ..models import Tender
+from .common import is_it_tender, search_tenders_via_searxng
 
 logger = logging.getLogger("tenders.eu_ted")
 
-# TED API (new version)
-API_BASE = "https://api.ted.europa.eu/v3"
-SEARCH_URL = f"{API_BASE}/notices/search"
-
-IT_CPV_CODES = [
-    "72000000",  # IT services
-    "72200000",  # Software programming
-    "72300000",  # Data services
-    "72400000",  # Internet services
-    "48000000",  # Software packages
-    "72210000",  # Programming of packaged software
-    "72220000",  # Systems and technical consultancy
-    "72260000",  # Software-related services
-    "72310000",  # Data-processing
-    "72500000",  # Computer-related services
+SEARCH_QUERIES = [
+    'site:ted.europa.eu software development 2026',
+    'site:ted.europa.eu IT services cloud 2026',
+    'site:ted.europa.eu cybersecurity hosting 2026',
+    'EU tender software development 2026 active',
+    'European Union tender IT services cloud hosting 2026',
 ]
+
+EU_COUNTRIES = {
+    "germany": "Germany", "france": "France", "spain": "Spain", "italy": "Italy",
+    "netherlands": "Netherlands", "belgium": "Belgium", "austria": "Austria",
+    "sweden": "Sweden", "denmark": "Denmark", "finland": "Finland",
+    "portugal": "Portugal", "ireland": "Ireland", "poland": "Poland",
+    "czech": "Czech Republic", "romania": "Romania", "greece": "Greece",
+}
+
+
+def _detect_eu_country(text: str) -> str:
+    text_lower = text.lower()
+    for pattern, country in EU_COUNTRIES.items():
+        if pattern in text_lower:
+            return country
+    return "EU"
 
 
 async def crawl(days_back: int = 14, max_results: int = 20) -> list[Tender]:
-    """Search EU TED for IT tenders."""
+    """Find EU IT tenders via SearXNG."""
     tenders = []
+    seen_urls = set()
 
-    try:
-        # TED Search API
-        published_from = (datetime.now(timezone.utc) - timedelta(days=days_back)).strftime("%Y%m%d")
+    for query in SEARCH_QUERIES:
+        try:
+            results = await search_tenders_via_searxng(query, max_results=10)
+            for r in results:
+                url = r.get("url", "")
+                title = r.get("title", "")
+                snippet = r.get("content", "")
 
-        async with httpx.AsyncClient(timeout=30) as client:
-            # Try the search endpoint
-            for cpv in IT_CPV_CODES[:3]:
-                try:
-                    resp = await client.get(
-                        "https://ted.europa.eu/api/v3.0/notices/search",
-                        params={
-                            "q": f"cpv:{cpv}",
-                            "pageSize": min(max_results, 10),
-                            "pageNum": 1,
-                            "scope": 3,  # Active notices
-                        },
-                        headers={"Accept": "application/json"},
-                    )
+                if url in seen_urls or not title:
+                    continue
+                seen_urls.add(url)
 
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        notices = data.get("notices", data.get("results", []))
+                combined = f"{title} {snippet}".lower()
+                if not is_it_tender(combined):
+                    continue
 
-                        for notice in notices:
-                            title = notice.get("title", notice.get("titleText", ""))
-                            org = notice.get("buyerName", notice.get("organisationName", ""))
-                            country = notice.get("country", notice.get("iso_country", "EU"))
-                            deadline = notice.get("deadline", notice.get("submissionDeadline", ""))
-                            pub_date = notice.get("publicationDate", "")
-                            doc_id = notice.get("documentNumber", notice.get("noticeId", ""))
-                            amount = notice.get("estimatedValue", "")
+                if any(skip in url for skip in ["/search", "result?", "page="]):
+                    continue
 
-                            tenders.append(Tender(
-                                title=title[:200] if isinstance(title, str) else str(title)[:200],
-                                organization=org if isinstance(org, str) else str(org),
-                                country=country if isinstance(country, str) else "EU",
-                                source="eu_ted",
-                                source_url=f"https://ted.europa.eu/en/notice/-/detail/{doc_id}" if doc_id else "https://ted.europa.eu",
-                                description=f"EU TED Notice: {title}",
-                                amount=str(amount) if amount else "",
-                                currency="EUR",
-                                deadline=str(deadline)[:10] if deadline else "",
-                                published_date=str(pub_date)[:10] if pub_date else "",
-                                reference_number=str(doc_id),
-                                category="IT Services",
-                            ))
+                country = _detect_eu_country(f"{title} {snippet}")
 
-                except Exception as e:
-                    logger.debug("TED CPV search failed for %s: %s", cpv, e)
+                deadline = ""
+                date_match = re.search(r'(\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4})', snippet)
+                if date_match:
+                    deadline = date_match.group(1)
+
+                amount = ""
+                amt_match = re.search(r'(?:EUR|€)\s*([\d,.]+)', snippet, re.I)
+                if amt_match:
+                    amount = f"EUR {amt_match.group(1)}"
+
+                org = "EU Government"
+                org_match = re.search(r'(?:Ministry|Commission|Agency|Authority|Council|Department)\s+(?:of\s+)?[\w\s]+', f"{title} {snippet}", re.I)
+                if org_match:
+                    org = org_match.group(0).strip()[:100]
+
+                source = "eu_ted_search" if "ted.europa.eu" in url else "eu_search"
+
+                tenders.append(Tender(
+                    title=title[:200],
+                    organization=org,
+                    country=country,
+                    source=source,
+                    source_url=url,
+                    description=snippet[:300],
+                    amount=amount,
+                    currency="EUR",
+                    deadline=deadline,
+                    category="IT Services",
+                ))
 
                 if len(tenders) >= max_results:
                     break
 
-            # Fallback: keyword search
-            if not tenders:
-                for keyword in ["software development", "IT services", "digital"]:
-                    try:
-                        resp = await client.get(
-                            "https://ted.europa.eu/api/v3.0/notices/search",
-                            params={"q": keyword, "pageSize": 10, "scope": 3},
-                            headers={"Accept": "application/json"},
-                        )
-                        if resp.status_code == 200:
-                            data = resp.json()
-                            for notice in data.get("notices", data.get("results", [])):
-                                title = notice.get("title", str(notice.get("titleText", "")))
-                                tenders.append(Tender(
-                                    title=str(title)[:200],
-                                    organization=str(notice.get("buyerName", "")),
-                                    country="EU",
-                                    source="eu_ted",
-                                    source_url="https://ted.europa.eu",
-                                    category="IT Services",
-                                ))
-                    except Exception:
-                        pass
+        except Exception as e:
+            logger.debug("EU TED search failed: %s", e)
 
-    except Exception as e:
-        logger.warning("EU TED crawl failed: %s", e)
+        if len(tenders) >= max_results:
+            break
 
-    logger.info("EU TED: found %d IT tenders", len(tenders))
+    logger.info("EU TED (via search): found %d IT tenders", len(tenders))
     return tenders[:max_results]

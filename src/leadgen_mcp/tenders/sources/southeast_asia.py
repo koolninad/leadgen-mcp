@@ -1,141 +1,124 @@
-"""Southeast Asia tender sources — Singapore, Philippines, Thailand."""
+"""Southeast Asia tender sources — Singapore, Philippines, Malaysia, Thailand.
+
+GeBIZ is XHTML, PhilGEPS is SPA. Use SearXNG as primary strategy.
+"""
 
 import logging
 import re
 
-import httpx
-from bs4 import BeautifulSoup
-
 from ..models import Tender
+from .common import is_it_tender, search_tenders_via_searxng
 
 logger = logging.getLogger("tenders.southeast_asia")
 
-IT_KEYWORDS = ["software", "it ", "ict", "digital", "web", "cloud", "data", "cyber",
-               "network", "system", "application", "portal", "server", "hosting",
-               "technology", "computer", "database", "mobile"]
+SEARCH_QUERIES = [
+    # Singapore
+    'site:gebiz.gov.sg tender software IT 2026',
+    'Singapore government tender IT services software cloud 2026',
+    'Singapore tender cybersecurity hosting technology 2026',
+    # Philippines
+    'site:philgeps.gov.ph tender IT software 2026',
+    'Philippines government tender software development 2026',
+    # Malaysia
+    'Malaysia government tender IT services software 2026',
+    'site:myprocurement.gov.my tender technology',
+    # Thailand
+    'Thailand government tender IT software development 2026',
+    # General ASEAN
+    'ASEAN government tender software cloud hosting 2026',
+]
+
+COUNTRY_PATTERNS = {
+    "singapore": "Singapore", "gebiz": "Singapore",
+    "philippines": "Philippines", "philgeps": "Philippines", "manila": "Philippines",
+    "malaysia": "Malaysia", "kuala lumpur": "Malaysia",
+    "thailand": "Thailand", "bangkok": "Thailand",
+    "indonesia": "Indonesia", "jakarta": "Indonesia",
+    "vietnam": "Vietnam", "hanoi": "Vietnam",
+}
 
 
-def _is_it_tender(text: str) -> bool:
-    return any(kw in text.lower() for kw in IT_KEYWORDS)
-
-
-async def crawl_singapore(max_results: int = 15) -> list[Tender]:
-    """Singapore GeBIZ + data.gov.sg structured data."""
-    tenders = []
-
-    # data.gov.sg API (structured JSON)
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.get(
-                "https://data.gov.sg/api/action/datastore_search",
-                params={"resource_id": "d_acde1106003906a75c3fa052592f2fcb", "limit": 50},
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                records = data.get("result", {}).get("records", [])
-                for rec in records:
-                    title = rec.get("tender_description", rec.get("title", ""))
-                    if not _is_it_tender(str(title)):
-                        continue
-
-                    agency = rec.get("agency", "Singapore Government")
-                    close_date = rec.get("tender_closing_date", "")
-                    ref = rec.get("tender_no", "")
-                    award = rec.get("awarded_amt", "")
-
-                    tenders.append(Tender(
-                        title=str(title)[:200], organization=str(agency),
-                        country="Singapore", source="gebiz_sg",
-                        source_url=f"https://www.gebiz.gov.sg/ptn/opportunity/BOListing.xhtml",
-                        deadline=str(close_date)[:10] if close_date else "",
-                        amount=f"SGD {award}" if award else "",
-                        currency="SGD", reference_number=str(ref),
-                        category="IT Services",
-                    ))
-                    if len(tenders) >= max_results:
-                        break
-
-    except Exception as e:
-        logger.warning("Singapore data.gov.sg failed: %s", e)
-
-    # Fallback: scrape GeBIZ
-    if not tenders:
-        try:
-            async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-                resp = await client.get(
-                    "https://www.gebiz.gov.sg/ptn/opportunity/BOListing.xhtml",
-                    headers={"User-Agent": "Mozilla/5.0"},
-                )
-                if resp.status_code == 200:
-                    soup = BeautifulSoup(resp.text, "lxml")
-                    for row in soup.select("table tr, .opportunity, [class*='listing']")[:max_results * 3]:
-                        title_el = row.select_one("a, td, .title")
-                        if not title_el:
-                            continue
-                        title = title_el.get_text(strip=True)[:200]
-                        if title and _is_it_tender(title):
-                            tenders.append(Tender(
-                                title=title, organization="Singapore Government",
-                                country="Singapore", source="gebiz_sg",
-                                source_url="https://www.gebiz.gov.sg",
-                                category="IT Services",
-                            ))
-                            if len(tenders) >= max_results:
-                                break
-        except Exception as e:
-            logger.debug("GeBIZ scrape failed: %s", e)
-
-    logger.info("Singapore: found %d IT tenders", len(tenders))
-    return tenders[:max_results]
-
-
-async def crawl_philippines(max_results: int = 10) -> list[Tender]:
-    """Philippines PhilGEPS."""
-    tenders = []
-    try:
-        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-            resp = await client.get(
-                "https://www.philgeps.gov.ph/",
-                headers={"User-Agent": "Mozilla/5.0"},
-            )
-            if resp.status_code != 200:
-                return []
-
-            soup = BeautifulSoup(resp.text, "lxml")
-            for row in soup.select("table tr, .tender-row, [class*='opportunity']"):
-                title_el = row.select_one("a, td, .title")
-                if not title_el:
-                    continue
-                title = title_el.get_text(strip=True)[:200]
-                if not title or len(title) < 10 or not _is_it_tender(title):
-                    continue
-
-                link = ""
-                if title_el.name == "a":
-                    href = title_el.get("href", "")
-                    link = href if href.startswith("http") else f"https://www.philgeps.gov.ph{href}"
-
-                tenders.append(Tender(
-                    title=title, organization="Philippines Government",
-                    country="Philippines", source="philgeps",
-                    source_url=link or "https://www.philgeps.gov.ph",
-                    currency="PHP", category="IT Services",
-                ))
-                if len(tenders) >= max_results:
-                    break
-
-    except Exception as e:
-        logger.warning("PhilGEPS crawl failed: %s", e)
-
-    logger.info("Philippines: found %d IT tenders", len(tenders))
-    return tenders
+def _detect_country(text: str) -> str:
+    text_lower = text.lower()
+    for pattern, country in COUNTRY_PATTERNS.items():
+        if pattern in text_lower:
+            return country
+    return "Southeast Asia"
 
 
 async def crawl(max_results: int = 25) -> list[Tender]:
-    """Crawl all Southeast Asia sources."""
-    results = []
-    sg = await crawl_singapore(max_results // 2)
-    ph = await crawl_philippines(max_results // 2)
-    results = sg + ph
-    logger.info("Southeast Asia total: %d IT tenders", len(results))
-    return results[:max_results]
+    """Find SE Asia IT tenders via SearXNG."""
+    tenders = []
+    seen_urls = set()
+
+    for query in SEARCH_QUERIES:
+        try:
+            results = await search_tenders_via_searxng(query, max_results=8)
+            for r in results:
+                url = r.get("url", "")
+                title = r.get("title", "")
+                snippet = r.get("content", "")
+
+                if url in seen_urls or not title:
+                    continue
+                seen_urls.add(url)
+
+                combined = f"{title} {snippet}".lower()
+                if not is_it_tender(combined):
+                    continue
+
+                if any(skip in url for skip in ["/search", "/category", "page="]):
+                    continue
+
+                country = _detect_country(f"{title} {snippet} {url}")
+
+                deadline = ""
+                date_match = re.search(r'(\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4})', snippet)
+                if date_match:
+                    deadline = date_match.group(1)
+
+                amount = ""
+                for curr in ["SGD", "PHP", "MYR", "THB", "USD"]:
+                    amt_match = re.search(rf'{curr}\s*([\d,.]+)', snippet, re.I)
+                    if amt_match:
+                        amount = f"{curr} {amt_match.group(1)}"
+                        break
+
+                source_map = {
+                    "gebiz.gov.sg": "gebiz_sg", "philgeps.gov.ph": "philgeps",
+                    "myprocurement.gov.my": "malaysia_proc",
+                }
+                source = "se_asia_search"
+                for domain, src in source_map.items():
+                    if domain in url:
+                        source = src
+                        break
+
+                org = f"{country} Government"
+                org_match = re.search(r'(?:Ministry|Department|Authority|Agency)\s+(?:of\s+)?[\w\s]+', f"{title} {snippet}", re.I)
+                if org_match:
+                    org = org_match.group(0).strip()[:100]
+
+                tenders.append(Tender(
+                    title=title[:200],
+                    organization=org,
+                    country=country,
+                    source=source,
+                    source_url=url,
+                    description=snippet[:300],
+                    amount=amount,
+                    deadline=deadline,
+                    category="IT Services",
+                ))
+
+                if len(tenders) >= max_results:
+                    break
+
+        except Exception as e:
+            logger.debug("SE Asia search failed: %s", e)
+
+        if len(tenders) >= max_results:
+            break
+
+    logger.info("Southeast Asia (via search): found %d IT tenders", len(tenders))
+    return tenders[:max_results]

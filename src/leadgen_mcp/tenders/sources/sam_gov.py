@@ -27,6 +27,7 @@ async def crawl(days_back: int = 14, max_results: int = 30) -> list[Tender]:
     """Search SAM.gov Opportunities API."""
     tenders = []
     posted_from = (datetime.now(timezone.utc) - timedelta(days=days_back)).strftime("%m/%d/%Y")
+    posted_to = datetime.now(timezone.utc).strftime("%m/%d/%Y")
 
     for keyword in KEYWORDS[:5]:
         for api_base in API_BASES:
@@ -35,8 +36,8 @@ async def crawl(days_back: int = 14, max_results: int = 30) -> list[Tender]:
                     resp = await client.get(api_base, params={
                         "api_key": settings.sam_gov_api_key,
                         "postedFrom": posted_from,
+                        "postedTo": posted_to,
                         "keyword": keyword,
-                        "ptype": "o",
                         "limit": min(max_results, 25),
                     })
                     if resp.status_code != 200:

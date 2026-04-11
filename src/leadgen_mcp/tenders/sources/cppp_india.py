@@ -1,4 +1,8 @@
-"""CPPP (Central Public Procurement Portal) — India. Web scraping."""
+"""India tender sources — CPPP, GeM, State portals via SearXNG fallback.
+
+CPPP has captcha protection, GeM is a SPA. Both are difficult to scrape directly.
+Strategy: Use SearXNG to search for active IT tenders from Indian government portals.
+"""
 
 import logging
 import re
@@ -7,200 +11,117 @@ import httpx
 from bs4 import BeautifulSoup
 
 from ..models import Tender
+from .common import is_it_tender, search_tenders_via_searxng
 
-logger = logging.getLogger("tenders.cppp_india")
+logger = logging.getLogger("tenders.india")
 
-CPPP_URL = "https://eprocure.gov.in/eprocure/app"
-GEM_SEARCH = "https://mkp.gem.gov.in/search"
-IT_KEYWORDS = [
-    "software", "web portal", "IT services", "cloud", "ERP",
-    "mobile app", "digital", "cybersecurity", "hosting", "database",
-    "e-governance", "network", "data center", "AI", "machine learning",
+SEARCH_QUERIES = [
+    # CPPP / eProcure
+    '"eprocure.gov.in" tender software 2026',
+    '"eprocure.gov.in" tender IT services 2026',
+    '"eprocure.gov.in" tender cloud hosting 2026',
+    # GeM
+    'site:gem.gov.in bid software development 2026',
+    'site:gem.gov.in bid IT services cloud 2026',
+    # State portals
+    'india government tender software development 2026 active',
+    'india state tender IT services cloud hosting 2026',
+    'india government tender cybersecurity blockchain 2026',
+    # Aggregators
+    'site:tendertiger.com india software development tender 2026',
+    'site:bidassist.com software IT services tender 2026',
 ]
 
 
-async def crawl_cppp(max_results: int = 20) -> list[Tender]:
-    """Crawl CPPP active tenders."""
+async def crawl_via_search(max_results: int = 30) -> list[Tender]:
+    """Find Indian IT tenders via SearXNG search."""
     tenders = []
+    seen_urls = set()
 
-    try:
-        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-            resp = await client.get(
-                f"{CPPP_URL}?page=FrontEndLatestActiveTenders&service=page",
-                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
-            )
-            if resp.status_code != 200:
-                logger.warning("CPPP returned %d", resp.status_code)
-                return []
+    for query in SEARCH_QUERIES:
+        try:
+            results = await search_tenders_via_searxng(query, max_results=10)
+            for r in results:
+                url = r.get("url", "")
+                title = r.get("title", "")
+                snippet = r.get("content", "")
 
-            soup = BeautifulSoup(resp.text, "lxml")
+                if url in seen_urls or not title:
+                    continue
+                seen_urls.add(url)
 
-            for row in soup.select("table tr")[1:]:
-                cells = row.select("td")
-                if len(cells) < 5:
+                # Check if it's IT-related
+                combined = f"{title} {snippet}".lower()
+                if not is_it_tender(combined):
                     continue
 
-                title = cells[1].get_text(strip=True)[:200] if len(cells) > 1 else ""
-                org = cells[2].get_text(strip=True) if len(cells) > 2 else ""
-                deadline = cells[3].get_text(strip=True) if len(cells) > 3 else ""
-                ref = cells[0].get_text(strip=True) if cells else ""
-
-                # Filter for IT-related tenders
-                combined = f"{title} {org}".lower()
-                if not any(kw in combined for kw in IT_KEYWORDS):
+                # Skip aggregator listing pages (not individual tenders)
+                if any(skip in url for skip in ["/search", "/category", "/listing", "page="]):
                     continue
 
-                link = ""
-                link_el = cells[1].select_one("a[href]") if len(cells) > 1 else None
-                if link_el:
-                    href = link_el.get("href", "")
-                    if href.startswith("/"):
-                        link = f"https://eprocure.gov.in{href}"
-                    elif href.startswith("http"):
-                        link = href
+                # Extract deadline from snippet
+                deadline = ""
+                date_match = re.search(r'(\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4})', snippet)
+                if date_match:
+                    deadline = date_match.group(1)
 
-                # Try to extract amount from title/description
+                # Extract amount
                 amount = ""
-                amt_match = re.search(r'(?:Rs\.?|INR|₹)\s*([\d,.]+)\s*(?:Cr|Lakh|crore|lakh)?', title, re.I)
+                amt_match = re.search(r'(?:Rs\.?|INR|₹)\s*([\d,.]+)\s*(?:Cr|Lakh|crore|lakh)?', snippet, re.I)
                 if amt_match:
                     amount = f"INR {amt_match.group(0)}"
 
+                # Determine source
+                source = "india_search"
+                if "eprocure.gov.in" in url:
+                    source = "cppp_india"
+                elif "gem.gov.in" in url:
+                    source = "gem_india"
+                elif "tntenders" in url:
+                    source = "india_tamil_nadu"
+                elif "mahatenders" in url:
+                    source = "india_maharashtra"
+                elif "tendertiger" in url or "bidassist" in url:
+                    source = "india_aggregator"
+
+                # Extract org from title/snippet
+                org = "Indian Government"
+                org_patterns = [
+                    r'(?:Ministry of|Department of|Directorate of|Office of)\s+[\w\s]+',
+                    r'(?:Corporation|Authority|Board|Commission|Council)\s*(?:of\s+[\w\s]+)?',
+                ]
+                for pat in org_patterns:
+                    org_match = re.search(pat, f"{title} {snippet}", re.I)
+                    if org_match:
+                        org = org_match.group(0).strip()[:100]
+                        break
+
                 tenders.append(Tender(
-                    title=title,
+                    title=title[:200],
                     organization=org,
                     country="India",
-                    source="cppp_india",
-                    source_url=link or CPPP_URL,
-                    description=f"CPPP Tender: {title}",
+                    source=source,
+                    source_url=url,
+                    description=snippet[:300],
                     amount=amount,
                     currency="INR",
                     deadline=deadline,
-                    reference_number=ref,
                     category="IT Services",
                 ))
 
                 if len(tenders) >= max_results:
                     break
 
-    except Exception as e:
-        logger.warning("CPPP crawl failed: %s", e)
-
-    logger.info("CPPP India: found %d IT tenders", len(tenders))
-    return tenders
-
-
-async def crawl_gem(max_results: int = 20) -> list[Tender]:
-    """Crawl GeM (Government e-Marketplace) India."""
-    tenders = []
-
-    for keyword in IT_KEYWORDS[:3]:
-        try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                resp = await client.get(
-                    GEM_SEARCH, params={"q": keyword, "page": 1},
-                    headers={"User-Agent": "Mozilla/5.0"},
-                )
-                if resp.status_code != 200:
-                    continue
-
-                soup = BeautifulSoup(resp.text, "lxml")
-                for card in soup.select(".bid-card, .product-card, [class*='tender'], [class*='bid']")[:max_results]:
-                    title_el = card.select_one("h3, h4, .title, [class*='title']")
-                    if not title_el:
-                        continue
-
-                    title = title_el.get_text(strip=True)[:200]
-                    dept_el = card.select_one(".department, .org, [class*='department']")
-                    dept = dept_el.get_text(strip=True) if dept_el else ""
-
-                    link = ""
-                    link_el = card.select_one("a[href]")
-                    if link_el:
-                        href = link_el.get("href", "")
-                        link = f"https://gem.gov.in{href}" if href.startswith("/") else href
-
-                    tenders.append(Tender(
-                        title=title,
-                        organization=dept,
-                        country="India",
-                        source="gem_india",
-                        source_url=link or "https://gem.gov.in",
-                        description=f"GeM: {title}",
-                        currency="INR",
-                        category="IT Services",
-                    ))
-
         except Exception as e:
-            logger.debug("GeM search failed: %s", e)
+            logger.debug("India search failed for '%s': %s", query[:30], e)
 
         if len(tenders) >= max_results:
             break
 
-    logger.info("GeM India: found %d tenders", len(tenders))
+    logger.info("India (via search): found %d IT tenders", len(tenders))
     return tenders[:max_results]
 
 
-async def crawl_state_portals(max_results: int = 15) -> list[Tender]:
-    """Crawl Indian state eProcurement portals (NIC-based)."""
-    tenders = []
-
-    # NIC-based state portals share the same structure
-    state_portals = [
-        ("Tamil Nadu", "https://tntenders.gov.in/nicgep/app"),
-        ("Maharashtra", "https://mahatenders.gov.in/nicgep/app"),
-        ("Andhra Pradesh", "https://tender.apeprocurement.gov.in/"),
-        ("Telangana", "https://tender.telangana.gov.in/"),
-        ("Uttar Pradesh", "https://etender.up.nic.in/nicgep/app"),
-    ]
-
-    for state_name, portal_url in state_portals:
-        try:
-            async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
-                resp = await client.get(
-                    portal_url,
-                    params={"page": "FrontEndLatestActiveTenders", "service": "page"} if "nicgep" in portal_url else {},
-                    headers={"User-Agent": "Mozilla/5.0"},
-                )
-                if resp.status_code != 200:
-                    continue
-
-                soup = BeautifulSoup(resp.text, "lxml")
-                for row in soup.select("table tr")[1:]:
-                    cells = row.select("td")
-                    if len(cells) < 3:
-                        continue
-
-                    title = cells[1].get_text(strip=True)[:200] if len(cells) > 1 else ""
-                    org = cells[2].get_text(strip=True) if len(cells) > 2 else state_name
-                    deadline = cells[3].get_text(strip=True) if len(cells) > 3 else ""
-
-                    combined = f"{title} {org}".lower()
-                    if not any(kw in combined for kw in IT_KEYWORDS):
-                        continue
-
-                    tenders.append(Tender(
-                        title=title, organization=org,
-                        country="India", source=f"india_{state_name.lower().replace(' ', '_')}",
-                        source_url=portal_url, deadline=deadline,
-                        currency="INR", category="IT Services",
-                    ))
-
-                    if len(tenders) >= max_results:
-                        break
-
-        except Exception as e:
-            logger.debug("State portal %s failed: %s", state_name, e)
-
-        if len(tenders) >= max_results:
-            break
-
-    logger.info("India state portals: found %d IT tenders", len(tenders))
-    return tenders[:max_results]
-
-
-async def crawl(max_results: int = 40) -> list[Tender]:
-    """Crawl all Indian tender sources."""
-    cppp = await crawl_cppp(max_results // 3)
-    gem = await crawl_gem(max_results // 3)
-    states = await crawl_state_portals(max_results // 3)
-    return (cppp + gem + states)[:max_results]
+async def crawl(max_results: int = 30) -> list[Tender]:
+    """Crawl Indian tender sources."""
+    return await crawl_via_search(max_results)
