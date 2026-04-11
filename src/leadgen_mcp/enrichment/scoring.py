@@ -36,9 +36,9 @@ def _load_weights() -> dict:
                     "medium_company": 5,
                 },
                 "engagement_readiness": {
-                    "max_score": 20,
+                    "max_score": 35,
                     "recent_project_posting": 8,
-                    "actively_hiring": 6,
+                    "actively_hiring": 8,
                     "recently_funded": 8,
                     "new_product_launch": 5,
                 },
@@ -162,18 +162,67 @@ def _calc_engagement_score(signals: list[str], weights: dict) -> float:
     max_score = weights["max_score"]
 
     signal_scores = {
+        # Platform posting signals
         "upwork_project": weights["recent_project_posting"],
         "clutch_listed": 3,
+        "reddit_post": 4,
+        "indiehacker": 5,
+        "show_hn_launch": 6,
+        "popular_launch": 8,
+        "producthunt_launch": weights["new_product_launch"],
+        "new_product": weights["new_product_launch"],
+        "ai_product": 5,
+
+        # Hiring signals (strongest intent)
+        "hiring": 10,
         "actively_hiring": weights["actively_hiring"],
         "hiring_engineers": weights["actively_hiring"],
+        "[Hiring]": 10,
+        "needs_developer": 10,
+        "needs_technical_cofounder": 12,
+        "looking_for_developer": 10,
+
+        # Funding signals
         "recently_funded": weights["recently_funded"],
         "funded_startup": weights["recently_funded"],
-        "new_product": weights["new_product_launch"],
-        "producthunt_launch": weights["new_product_launch"],
-        "needs_developer": 6,
-        "needs_technical_cofounder": 8,
+
+        # Business need signals
         "building_mvp": 5,
         "high_budget_project": 5,
+        "budget_mentioned": 8,
+        "no_website": 8,
+        "needs_web_presence": 8,
+        "local_business": 4,
+
+        # Technical signals
+        "broken_website": 8,
+        "broken_links": 6,
+        "ssl_expired": 8,
+        "server_errors": 7,
+        "outdated_wordpress": 7,
+        "outdated_jquery": 5,
+        "legacy_stack": 8,
+        "accessibility_violations": 7,
+        "ada_non_compliant": 10,
+        "not_mobile_friendly": 6,
+
+        # Domain signals
+        "newly_registered": 5,
+        "new_ssl_cert": 4,
+        "newly_incorporated": 6,
+        "business_keyword_match": 3,
+        "commercial_tld": 3,
+
+        # Tender signals
+        "tender": 8,
+        "government_contract": 8,
+        "software_rfp": 10,
+        "private_tender": 7,
+        "rfp": 7,
+
+        # Crypto/blockchain
+        "crypto_project": 6,
+        "needs_smart_contract_dev": 8,
     }
 
     for signal in signals:

@@ -894,13 +894,16 @@ class LeadGenPipeline:
             title = lead.get("company_name", "")
             description = lead.get("description", "")
 
-            job_id = await enqueue_comment(
-                lead_id=lead_id,
-                platform=source,
-                post_url=source_url,
-                title=title,
-                description=description,
-            )
+            try:
+                job_id = await enqueue_comment(
+                    lead_id=lead_id,
+                    platform=source,
+                    post_url=source_url,
+                    title=title,
+                    description=description,
+                )
+            except Exception:
+                job_id = None  # FK violation — lead_id not in leads table
             if job_id:
                 comment_count += 1
 
