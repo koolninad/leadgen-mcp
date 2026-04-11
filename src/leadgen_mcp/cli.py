@@ -1196,6 +1196,34 @@ def sender_status():
 # Queue management
 # ---------------------------------------------------------------------------
 
+@cli.command("tender-scan")
+@click.option("--max-per-source", default=15, help="Max tenders per source")
+def tender_scan(max_per_source):
+    """Scan for IT tenders, analyze with AI, generate proposals, send to Telegram."""
+    from .tenders.pipeline import run_tender_scan
+
+    console.print(Panel(
+        f"Scanning 5 tender sources (max {max_per_source} each)\n"
+        f"AI analysis → PDF proposal → Telegram group",
+        title="Tender Intelligence Scan",
+        border_style="magenta",
+    ))
+
+    async def _run():
+        stats = await run_tender_scan(max_per_source)
+        console.print(Panel(
+            f"Found: {stats['tenders_found']}\n"
+            f"Analyzed: {stats['analyzed']}\n"
+            f"PDFs generated: {stats['pdfs_generated']}\n"
+            f"Telegram sent: {stats['telegrams_sent']}\n"
+            f"Errors: {stats['errors']}",
+            title="Tender Scan Complete",
+            border_style="green" if stats["errors"] == 0 else "yellow",
+        ))
+
+    _run_async(_run())
+
+
 @cli.command("queue-status")
 def queue_status_cmd():
     """Show job queue statistics."""
