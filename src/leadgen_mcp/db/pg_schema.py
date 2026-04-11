@@ -282,6 +282,23 @@ CREATE INDEX IF NOT EXISTS idx_job_lead ON job_queue(lead_id);
 CREATE INDEX IF NOT EXISTS idx_job_type ON job_queue(job_type, status);
 CREATE INDEX IF NOT EXISTS idx_job_locked ON job_queue(locked_by, locked_at)
     WHERE status = 'processing';
+
+-- Tender tracking: avoid re-sending same tender on daily scans
+CREATE TABLE IF NOT EXISTS tenders_sent (
+    id SERIAL PRIMARY KEY,
+    title_hash TEXT NOT NULL,
+    source TEXT NOT NULL,
+    title TEXT,
+    organization TEXT,
+    country TEXT,
+    deadline TEXT,
+    telegram_sent BOOLEAN DEFAULT FALSE,
+    pdf_sent BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tender_hash ON tenders_sent(title_hash);
+CREATE INDEX IF NOT EXISTS idx_tender_source ON tenders_sent(source);
 """
 
 

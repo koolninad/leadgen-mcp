@@ -12,6 +12,7 @@ import asyncio
 import logging
 import time
 
+from ..config import settings
 from .analyzer import analyze_tender, search_contacts
 from .models import Tender
 from .notifier import send_tender_notification
@@ -45,16 +46,54 @@ async def crawl_all_sources(max_per_source: int = 15) -> list[Tender]:
         except Exception as e:
             logger.error("  %s FAILED: %s", name, e)
 
+    # Filter: only keep tenders with future deadlines (at least tomorrow)
+    from datetime import datetime, timedelta, timezone
+    tomorrow = (datetime.now(timezone.utc) + timedelta(days=1)).strftime("%Y-%m-%d")
+
+    future_tenders = []
+    expired = 0
+    no_deadline = 0
+    for t in all_tenders:
+        if not t.deadline:
+            # No deadline specified — include it (might be open-ended)
+            no_deadline += 1
+            future_tenders.append(t)
+            continue
+
+        # Parse deadline — try multiple formats
+        deadline_str = t.deadline.strip()[:10]
+        deadline_valid = False
+        for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%d-%m-%Y", "%Y/%m/%d"):
+            try:
+                dl = datetime.strptime(deadline_str, fmt)
+                if dl.strftime("%Y-%m-%d") >= tomorrow:
+                    future_tenders.append(t)
+                    deadline_valid = True
+                else:
+                    expired += 1
+                    deadline_valid = True
+                break
+            except ValueError:
+                continue
+
+        if not deadline_valid:
+            # Can't parse date — include it to be safe
+            future_tenders.append(t)
+
+    if expired:
+        logger.info("Filtered out %d expired tenders (deadline before %s)", expired, tomorrow)
+
     # Deduplicate by title similarity
     seen_titles = set()
     unique = []
-    for t in all_tenders:
+    for t in future_tenders:
         key = t.title.lower()[:60]
         if key not in seen_titles:
             seen_titles.add(key)
             unique.append(t)
 
-    logger.info("Total: %d unique tenders from %d raw", len(unique), len(all_tenders))
+    logger.info("Total: %d unique tenders from %d raw (%d expired, %d no deadline)",
+                len(unique), len(all_tenders), expired, no_deadline)
     return unique
 
 
@@ -119,6 +158,36 @@ async def run_tender_scan(max_per_source: int = 15) -> dict:
         logger.info("No tenders found")
         return stats
 
+    # Step 1.5: Filter out already-sent tenders (dedup across daily runs)
+    if settings.database_url:
+        try:
+            from ..db.pg_repository import get_pool
+            from ..db.pg_schema import create_schema
+            import hashlib
+
+            pool = await get_pool()
+            await create_schema(pool)
+
+            new_tenders = []
+            for t in tenders:
+                title_hash = hashlib.md5(f"{t.title[:100]}:{t.source}".encode()).hexdigest()
+                exists = await pool.fetchrow(
+                    "SELECT id FROM tenders_sent WHERE title_hash = $1", title_hash
+                )
+                if not exists:
+                    new_tenders.append(t)
+
+            skipped = len(tenders) - len(new_tenders)
+            if skipped:
+                logger.info("Skipped %d already-sent tenders", skipped)
+            tenders = new_tenders
+        except Exception as e:
+            logger.debug("Dedup check failed: %s", e)
+
+    if not tenders:
+        logger.info("No new tenders to process")
+        return stats
+
     # Step 2: Analyze each tender with Gemma4
     for i, tender in enumerate(tenders, 1):
         logger.info("[%d/%d] Analyzing: %s", i, len(tenders), tender.title[:60])
@@ -149,6 +218,23 @@ async def run_tender_scan(max_per_source: int = 15) -> dict:
             except Exception as e:
                 logger.warning("  Telegram failed: %s", e)
                 stats["errors"] += 1
+
+            # Save to DB so we don't re-send tomorrow
+            if settings.database_url:
+                try:
+                    import hashlib
+                    from ..db.pg_repository import get_pool
+                    pool = await get_pool()
+                    title_hash = hashlib.md5(f"{tender.title[:100]}:{tender.source}".encode()).hexdigest()
+                    await pool.execute(
+                        """INSERT INTO tenders_sent (title_hash, source, title, organization, country, deadline, telegram_sent, pdf_sent)
+                           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                           ON CONFLICT (title_hash) DO NOTHING""",
+                        title_hash, tender.source, tender.title[:200], tender.organization[:200],
+                        tender.country, tender.deadline, True, pdf_bytes is not None,
+                    )
+                except Exception:
+                    pass
 
             # Rate limit between tenders (Gemma4 is slow + Telegram rate limits)
             await asyncio.sleep(2)

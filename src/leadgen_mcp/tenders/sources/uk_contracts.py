@@ -24,9 +24,12 @@ async def crawl(days_back: int = 14, max_results: int = 20) -> list[Tender]:
     for keyword in KEYWORDS[:4]:
         try:
             async with httpx.AsyncClient(timeout=30) as client:
+                # Only get tenders closing in the future
+                tomorrow = (datetime.now(timezone.utc) + timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z")
                 resp = await client.get(API_BASE, params={
                     "keyword": keyword,
                     "publishedFrom": published_from,
+                    "closingDateFrom": tomorrow,
                     "size": min(max_results, 20),
                 })
                 if resp.status_code != 200:
