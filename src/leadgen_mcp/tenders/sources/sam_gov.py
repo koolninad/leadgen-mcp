@@ -1,4 +1,8 @@
-"""SAM.gov — US Federal tenders. Free REST API with key."""
+"""SAM.gov — US Federal tenders via internal search API (no API key needed).
+
+Uses SAM.gov's internal search endpoint (same as their website).
+No rate limits, no API key required.
+"""
 
 import logging
 from datetime import datetime, timedelta, timezone
@@ -6,35 +10,39 @@ from datetime import datetime, timedelta, timezone
 import httpx
 
 from ..models import Tender
-from ...config import settings
+from .common import is_it_tender
 
 logger = logging.getLogger("tenders.sam_gov")
 
-API_BASE = "https://api.sam.gov/prod/opportunities/v2/search"
+# Internal SAM.gov search API (no key needed)
+API_BASE = "https://sam.gov/api/prod/sgs/v1/search/"
 
 KEYWORDS = [
-    "software development", "web application", "cloud computing",
-    "cybersecurity", "IT services", "data analytics", "artificial intelligence",
-    "mobile application", "digital transformation", "hosting services",
-    "blockchain", "DevOps", "email solution", "server infrastructure",
+    "software development", "IT services", "cloud computing",
+    "cybersecurity", "web application", "hosting services",
+    "blockchain", "DevOps", "data analytics",
+    "digital transformation", "artificial intelligence",
 ]
 
 
-async def crawl(days_back: int = 30, max_results: int = 30) -> list[Tender]:
-    """Search SAM.gov Opportunities API."""
+async def crawl(days_back: int = 14, max_results: int = 30) -> list[Tender]:
+    """Search SAM.gov via internal API (no API key needed)."""
     tenders = []
-    posted_from = (datetime.now(timezone.utc) - timedelta(days=days_back)).strftime("%m/%d/%Y")
-    posted_to = datetime.now(timezone.utc).strftime("%m/%d/%Y")
+    seen_ids = set()
 
-    for keyword in KEYWORDS[:5]:
+    for keyword in KEYWORDS[:6]:
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
+            async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
                 resp = await client.get(API_BASE, params={
-                    "api_key": settings.sam_gov_api_key,
-                    "postedFrom": posted_from,
-                    "postedTo": posted_to,
-                    "keyword": keyword,
-                    "limit": min(max_results, 25),
+                    "index": "opp",
+                    "q": keyword,
+                    "page": 0,
+                    "size": min(max_results, 25),
+                    "mode": "search",
+                    "is_active": "true",
+                }, headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    "Accept": "application/hal+json",
                 })
 
                 if resp.status_code != 200:
@@ -42,41 +50,60 @@ async def crawl(days_back: int = 30, max_results: int = 30) -> list[Tender]:
                     continue
 
                 data = resp.json()
-                for opp in data.get("opportunitiesData", []):
+                results = data.get("_embedded", {}).get("results", [])
+
+                for opp in results:
                     title = opp.get("title", "")
-                    dept = opp.get("fullParentPathName", "")
                     sol_num = opp.get("solicitationNumber", "")
-                    deadline = opp.get("responseDeadLine", "")
-                    posted = opp.get("postedDate", "")
-                    ui_link = opp.get("uiLink", f"https://sam.gov/opp/{opp.get('noticeId', '')}/view")
-                    naics = opp.get("naicsCode", "")
-                    set_aside = opp.get("typeOfSetAside", "")
-                    desc = opp.get("description", "")
 
-                    # Extract contact
-                    contacts = opp.get("pointOfContact", [])
-                    contact_name = contacts[0].get("fullName", "") if contacts else ""
-                    contact_email = contacts[0].get("email", "") if contacts else ""
-                    contact_phone = contacts[0].get("phone", "") if contacts else ""
+                    # Dedup
+                    if sol_num in seen_ids:
+                        continue
+                    seen_ids.add(sol_num)
 
-                    # Format deadline
+                    # Only active
+                    if not opp.get("isActive", True):
+                        continue
+
+                    deadline = opp.get("responseDate", "")
                     if deadline and "T" in deadline:
                         deadline = deadline[:10]
 
+                    published = opp.get("publishDate", "")
+                    if published and "T" in published:
+                        published = published[:10]
+
+                    opp_type = opp.get("type", {})
+                    type_desc = opp_type.get("value", "") if isinstance(opp_type, dict) else str(opp_type)
+
+                    # Get description
+                    descriptions = opp.get("descriptions", [])
+                    desc = ""
+                    if descriptions and isinstance(descriptions, list):
+                        desc = descriptions[0].get("content", "")[:500] if isinstance(descriptions[0], dict) else str(descriptions[0])[:500]
+
+                    # Try to get organization from the opp data
+                    org = opp.get("organizationHierarchy", opp.get("department", "US Federal Government"))
+                    if isinstance(org, list) and org:
+                        org = org[0].get("name", "US Federal Government") if isinstance(org[0], dict) else str(org[0])
+                    elif isinstance(org, dict):
+                        org = org.get("name", "US Federal Government")
+
+                    # Build SAM.gov link
+                    notice_id = opp.get("noticeId", sol_num)
+                    ui_link = f"https://sam.gov/opp/{notice_id}/view" if notice_id else "https://sam.gov/search"
+
                     tenders.append(Tender(
                         title=title[:200],
-                        organization=dept,
+                        organization=str(org)[:200],
                         country="USA",
                         source="sam_gov",
                         source_url=ui_link,
-                        description=desc[:500] if desc else f"NAICS: {naics}. {set_aside}",
+                        description=desc if desc else f"Type: {type_desc}. Sol#: {sol_num}",
                         reference_number=sol_num,
                         deadline=deadline,
-                        published_date=posted,
+                        published_date=published,
                         category="IT Services",
-                        contact_name=contact_name,
-                        contact_email=contact_email,
-                        contact_phone=contact_phone,
                         raw_data=opp,
                     ))
 
