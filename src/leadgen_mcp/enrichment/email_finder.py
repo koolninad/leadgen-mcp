@@ -10,6 +10,7 @@ from bs4 import BeautifulSoup
 
 from ..utils.http import create_client
 from ..utils.validators import is_valid_email, clean_email
+from .truemail_client import verify_batch
 
 
 _PATTERNS_PATH = Path(__file__).parent.parent.parent.parent / "data" / "email_patterns.json"
@@ -127,13 +128,22 @@ def _detect_catch_all(mx_records: list[str]) -> bool:
 
 
 async def find_emails_for_domain(
-    domain: str, contact_name: str | None = None
+    domain: str,
+    contact_name: str | None = None,
+    verify: bool = True,
 ) -> dict:
-    """Full email discovery pipeline for a domain."""
+    """Full email discovery pipeline for a domain.
+
+    When ``verify=True``, every scraped email and generated candidate is
+    validated through truemail-rack (regex -> MX -> SMTP RCPT TO). Results
+    are added to ``verified_emails`` / ``verified_candidates``.
+    """
     results = {
         "domain": domain,
         "emails_found": [],
         "candidates_generated": [],
+        "verified_emails": [],
+        "verified_candidates": [],
         "mx_info": {},
     }
 
@@ -171,6 +181,15 @@ async def find_emails_for_domain(
         last = parts[-1] if len(parts) > 1 else ""
         candidates = await generate_candidate_emails(domain, first, last)
         results["candidates_generated"] = candidates
+
+    # 4. Verify with truemail (regex -> MX -> SMTP RCPT TO)
+    if verify:
+        if results["emails_found"]:
+            verified = await verify_batch(results["emails_found"])
+            results["verified_emails"] = [v for v in verified if v.get("valid")]
+        if results["candidates_generated"]:
+            verified = await verify_batch(results["candidates_generated"])
+            results["verified_candidates"] = [v for v in verified if v.get("valid")]
 
     return results
 

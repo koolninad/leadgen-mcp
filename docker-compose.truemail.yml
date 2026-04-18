@@ -1,0 +1,23 @@
+version: '3.8'
+services:
+  truemail:
+    image: truemail/rack:latest
+    container_name: leadgen-truemail
+    ports:
+      - "9292:9292"
+    environment:
+      # Required: address that appears in MAIL FROM during SMTP RCPT TO probes.
+      # Must be on a domain you control with valid SPF/DMARC, or many MX servers will refuse.
+      - VERIFIER_EMAIL=${TRUEMAIL_VERIFIER_EMAIL:-verifier@example.com}
+      - VERIFIER_DOMAIN=${TRUEMAIL_VERIFIER_DOMAIN:-example.com}
+      # Bearer token required on all requests via X-Access-Token header.
+      - ACCESS_TOKEN=${TRUEMAIL_ACCESS_TOKEN:-changeme-local-dev-token}
+      # regex | mx | smtp  (smtp = full pipeline incl. RCPT TO)
+      - DEFAULT_VALIDATION_TYPE=smtp
+      - SMTP_SAFE_CHECK=true
+      - CONNECTION_TIMEOUT=5
+      - RESPONSE_TIMEOUT=5
+      - CONNECTION_ATTEMPTS=2
+      # Optional: BLACKLISTED_DOMAINS=foo.com,bar.com
+      # Optional: WHITELISTED_DOMAINS=trusted.com
+    restart: unless-stopped

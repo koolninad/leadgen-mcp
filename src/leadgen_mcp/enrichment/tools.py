@@ -1,6 +1,7 @@
 """MCP tool definitions for the Lead Enrichment module."""
 
 from .email_finder import find_emails_for_domain
+from .truemail_client import verify_email, verify_batch, health_check as truemail_health
 from .contacts import find_decision_makers
 from .company_intel import get_company_intel
 from .scoring import score_lead
@@ -74,6 +75,32 @@ def register(mcp):
             contact_name: Optional name to generate personalized email candidates
         """
         return await find_emails_for_domain(domain, contact_name)
+
+    @mcp.tool()
+    async def verify_email_address(email: str) -> dict:
+        """Verify a single email through truemail-rack (regex → MX → SMTP RCPT TO).
+
+        Args:
+            email: The email address to verify
+        """
+        return await verify_email(email)
+
+    @mcp.tool()
+    async def verify_email_list(emails: list[str], concurrency: int = 5) -> dict:
+        """Verify a batch of emails through truemail-rack.
+
+        Args:
+            emails: List of email addresses to verify
+            concurrency: Parallel probes (keep low to avoid MX rate limits)
+        """
+        results = await verify_batch(emails, concurrency=concurrency)
+        valid = [r for r in results if r.get("valid")]
+        return {"total": len(results), "valid": len(valid), "results": results}
+
+    @mcp.tool()
+    async def truemail_status() -> dict:
+        """Check that the truemail-rack service is reachable and authenticated."""
+        return await truemail_health()
 
     @mcp.tool()
     async def find_lead_decision_makers(domain: str) -> dict:

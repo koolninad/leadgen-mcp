@@ -38,6 +38,13 @@ class Settings(BaseSettings):
     email_rate_per_minute: int = 2
     email_rate_per_hour: int = 30
 
+    # Truemail (self-hosted email validation — docker-compose.truemail.yml)
+    truemail_url: str = "http://localhost:9292"
+    truemail_access_token: str = "changeme-local-dev-token"
+    truemail_enabled: bool = True
+    truemail_timeout: float = 15.0
+    truemail_cache_ttl: int = 86400  # cache verification results (seconds)
+
     # SearXNG (self-hosted search)
     searxng_url: str = "http://localhost:8888"  # SearXNG instance URL
     searxng_enabled: bool = True

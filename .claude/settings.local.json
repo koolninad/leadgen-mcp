@@ -17,7 +17,9 @@
       "Bash(ls E:/tp/src/leadgen_mcp/domain_intel/*.py)",
       "Bash(ls E:/tp/src/leadgen_mcp/platforms/*.py)",
       "Bash(gh auth:*)",
-      "Bash(ls -la /Users/ninad/Desktop/projects/leadgen-mcp/src/leadgen_mcp/platforms/*.py)"
+      "Bash(ls -la /Users/ninad/Desktop/projects/leadgen-mcp/src/leadgen_mcp/platforms/*.py)",
+      "Bash(./venv/bin/python:*)",
+      "Bash(ssh:*)"
     ]
   }
 }
